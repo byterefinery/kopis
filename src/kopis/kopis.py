@@ -1,5 +1,6 @@
 """Kopis: pure-Python web development."""
-__all__ = ['Kopis']
+
+__all__ = ["Kopis"]
 
 import sys
 import inspect
