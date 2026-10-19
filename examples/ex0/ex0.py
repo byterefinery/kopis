@@ -2,6 +2,5 @@ from kopis import Kopis
 
 k = Kopis()
 
-# k.document <= 'Hello 2'
-
+# serve app from the directory of this script
 k.run()
