@@ -19,6 +19,7 @@ from typing import Self
 from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
+from aiohttp_sse import EventSourceResponse
 from bs4 import BeautifulSoup, Tag
 from bs4.builder import HTMLTreeBuilder
 
@@ -51,6 +52,10 @@ def _entry_script_dir() -> Path | None:
 #: Tags that never have children or an end tag.
 _empty_tags = HTMLTreeBuilder.DEFAULT_EMPTY_ELEMENT_TAGS
 _VOID_TAGS = frozenset(_empty_tags) if _empty_tags is not None else frozenset()
+
+#: How long an SSE stream waits for the next call before re-checking whether
+#: the client is still connected (bounded by the response's ping interval).
+_SSE_IDLE_TIMEOUT = 15.0
 
 
 def _line_offsets(text: str) -> list[int]:
@@ -205,6 +210,27 @@ class _Rpc:
         return call
 
 
+class _Stream:
+    """An open SSE stream of a client, and the queue of calls to push to it.
+
+    The queue is a delivery mirror of the durable per-client call queue:
+    a call is pushed here as soon as it is queued, and is replayed from the
+    durable queue whenever the client (re)connects. ``close()`` wakes the
+    delivery loop of a stream that was replaced by a newer connection.
+    """
+
+    def __init__(self) -> None:
+        self.queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+    def push(self, call: dict) -> None:
+        """Queue a call for delivery to the client."""
+        self.queue.put_nowait(call)
+
+    def close(self) -> None:
+        """Wake the delivery loop so it can stop (a sentinel is enqueued)."""
+        self.queue.put_nowait(None)
+
+
 class Kopis:
     """A web application served from a root directory.
 
@@ -227,10 +253,13 @@ class Kopis:
     from the client as ``await k.rpc.<name>(...)``. Clients register
     their own functions the same way, and the server can call them back
     with ``await k.rpc.<name>(...)`` (inside a bound function, which
-    targets the calling client) or ``k.call(client_id, ...)``.
-    Clients are identified by an encrypted session cookie, and all
-    exchanged data is plain JSON (custom types are converted via their
-    ``to_json()`` method).
+    targets the calling client) or ``k.call(client_id, ...)``. Calls to
+    client functions are pushed over a Server-Sent Events stream
+    (``/__kopis__/rpc/events``); the client posts its results back to
+    ``/__kopis__/rpc/results`` as soon as they are ready. Clients are
+    identified by an encrypted session cookie, and all exchanged data
+    is plain JSON (custom types are converted via their ``to_json()``
+    method).
     """
 
     def __init__(
@@ -251,6 +280,7 @@ class Kopis:
         self._clients: dict[str, float] = {}
         self._pending_calls: dict[str, list[dict]] = {}
         self._pending_results: dict[int, asyncio.Future] = {}
+        self._streams: dict[str, _Stream] = {}
         self._next_call_id = itertools.count(1)
         self._current_client: contextvars.ContextVar[str | None] = contextvars.ContextVar(
             "kopis_current_client", default=None
@@ -267,7 +297,8 @@ class Kopis:
         # Registered before the static route so that it takes precedence on ``/``.
         self.app.router.add_get("/", self._serve_document)
         self.app.router.add_post("/__kopis__/rpc", self._rpc)
-        self.app.router.add_post("/__kopis__/rpc/poll", self._rpc_poll)
+        self.app.router.add_get("/__kopis__/rpc/events", self._rpc_events)
+        self.app.router.add_post("/__kopis__/rpc/results", self._rpc_results)
 
         self.app.router.add_static("/", self.root, follow_symlinks=True)
 
@@ -352,14 +383,18 @@ class Kopis:
 
         Returns a future that resolves with the client's return value, or
         raises :class:`~kopis.serialize.RpcError` if the call failed there.
-        Requires a running event loop.
+        The call is pushed to the client's open SSE stream at once, or held
+        in the queue until the client (re)connects. Requires a running
+        event loop.
         """
         call_id = next(self._next_call_id)
-        self._pending_calls.setdefault(client_id, []).append(
-            {"id": call_id, "method": method, "args": list(args), "kwargs": kwargs}
-        )
+        call = {"id": call_id, "method": method, "args": list(args), "kwargs": kwargs}
+        self._pending_calls.setdefault(client_id, []).append(call)
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending_results[call_id] = future
+        stream = self._streams.get(client_id)
+        if stream is not None:
+            stream.push(call)
         return future
 
     async def _call_client(self, method: str, args: tuple, kwargs: dict) -> object:
@@ -425,12 +460,65 @@ class Kopis:
             self._current_client.reset(token)
         return self._json(payload)
 
-    async def _rpc_poll(self, request: web.Request) -> web.Response:
-        """Handle a client poll (POST /__kopis__/rpc/poll).
+    async def _rpc_events(self, request: web.Request) -> web.StreamResponse:
+        """Serve a client's SSE stream (GET /__kopis__/rpc/events).
 
-        The client submits the results of calls it ran and receives the
-        batch of calls queued for functions it registered with
-        :meth:`bind`.
+        The stream pushes ``call`` events, one per call queued for functions
+        the client registered with :meth:`bind`. On (re)connection, every
+        call still awaiting its result is replayed, so a dropped connection
+        loses no work; the client skips call ids it already ran. Results
+        come back over :meth:`_rpc_results`.
+        """
+        session = await get_session(request)
+        if session.get("client_id") is None:
+            # A brand-new session cannot be established here: the stream's
+            # headers go out before the session middleware could set the
+            # cookie. The document request always runs first and does that.
+            raise web.HTTPBadRequest(text="no session; load the document first")
+        client_id = self._ensure_client_id(session)
+        resp = EventSourceResponse()
+        await resp.prepare(request)
+        stream = _Stream()
+        old = self._streams.get(client_id)
+        self._streams[client_id] = stream
+        if old is not None:
+            old.close()
+        try:
+            for call in list(self._pending_calls.get(client_id, [])):
+                await self._send_call(resp, call)
+            while True:
+                try:
+                    call = await asyncio.wait_for(
+                        stream.queue.get(), timeout=_SSE_IDLE_TIMEOUT
+                    )
+                except TimeoutError:
+                    if not resp.is_connected():
+                        break  # client gone
+                    continue
+                if call is None:
+                    break  # replaced by a newer connection
+                await self._send_call(resp, call)
+        except Exception:  # noqa: BLE001, S110 - a dead connection just ends the stream
+            # Pending calls stay queued and are replayed when the client
+            # (re)connects.
+            pass
+        finally:
+            if resp.prepared:
+                resp.stop_streaming()
+            if self._streams.get(client_id) is stream:
+                del self._streams[client_id]
+        return resp
+
+    @staticmethod
+    async def _send_call(resp: EventSourceResponse, call: dict) -> None:
+        await resp.send(encode(call), event="call", id=str(call["id"]))
+
+    async def _rpc_results(self, request: web.Request) -> web.Response:
+        """Handle results from a client (POST /__kopis__/rpc/results).
+
+        Each result resolves the future created by :meth:`call` and removes
+        the call from the replay queue. Duplicates (a lost round trip) are
+        ignored, so the client can safely re-send results.
         """
         session = await get_session(request)
         client_id = self._ensure_client_id(session)
@@ -438,20 +526,30 @@ class Kopis:
             msg = decode(await request.text())
             results: list = msg.get("results", [])
         except (json.JSONDecodeError, TypeError):
-            raise web.HTTPBadRequest(text="bad poll request")
+            raise web.HTTPBadRequest(text="bad results request")
+        if not isinstance(results, list):
+            raise web.HTTPBadRequest(text="bad results request")
 
+        calls = self._pending_calls.get(client_id)
         for res in results:
-            future = self._pending_results.pop(res.get("id"), None)
+            if not isinstance(res, dict):
+                continue
+            call_id = res.get("id")
+            future = self._pending_results.pop(call_id, None)
             if future is None or future.done():
                 continue
+            if calls is not None:
+                calls = [c for c in calls if c.get("id") != call_id]
+                if calls:
+                    self._pending_calls[client_id] = calls
+                else:
+                    del self._pending_calls[client_id]
             if "error" in res:
                 err = res["error"]
                 future.set_exception(RpcError(err.get("type", "Error"), err.get("message", "")))
             else:
                 future.set_result(res.get("result"))
-
-        calls = self._pending_calls.pop(client_id, [])
-        return self._json({"calls": calls})
+        return self._json({"ok": True})
 
     def _setup_brython(self) -> None:
         """Set up the app to run client-side code with Brython.
