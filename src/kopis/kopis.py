@@ -309,15 +309,15 @@ class Kopis:
         )
 
         self.document = """
-<html>
-    <head>
-        <meta charset="utf-8">
-    </head>
+            <html>
+                <head>
+                    <meta charset="utf-8">
+                </head>
 
-    <body>
-    </body>
-</html>
-"""
+                <body>
+                </body>
+            </html>
+        """
 
         with self.document["head"] as el:
             el.append(
@@ -357,6 +357,7 @@ class Kopis:
             html = str(self._parse())
         except FileNotFoundError:
             raise web.HTTPNotFound()
+
         return web.Response(text=html, content_type="text/html")
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
