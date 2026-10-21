@@ -189,9 +189,18 @@ class Kopis:
     ``k.document["head"].add("<script src=...></script>")``, and
     :meth:`add_static_file` serves files from anywhere on disk at a
     chosen URL.
+
+    ``use="brython"`` configures the app to run client-side Python code
+    with `Brython <https://brython.info>`_: the Brython scripts and the
+    modules of the ``kopis`` package are served, and a default document
+    loading the Brython scripts is created.
     """
 
-    def __init__(self, root: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        use: str | None = None,
+    ) -> None:
         if root is not None:
             self.root = Path(root).resolve()
         else:
@@ -205,6 +214,12 @@ class Kopis:
         self.app.router.add_get("/", self._serve_document)
 
         self.app.router.add_static("/", self.root, follow_symlinks=True)
+
+        if use not in (None, "brython"):
+            raise ValueError(f"unknown value for use: {use!r}")
+
+        if use == "brython":
+            self._setup_brython()
 
     @property
     def document(self) -> Document:
@@ -255,6 +270,58 @@ class Kopis:
         offset = _insertion_offset(text, tag)
         self._document = text[:offset] + fragment + text[offset:]
         self._soup = None
+
+    def _setup_brython(self) -> None:
+        """Set up the app to run client-side code with Brython.
+
+        Serves the JavaScript files of the installed ``brython`` package
+        at ``/brython.js`` and ``/brython_stdlib.js``, serves the Python
+        modules of the ``kopis`` package at the URLs Brython's import
+        system expects (so e.g. ``from kopis.brython.browser import ...``
+        in client code resolves), and initializes a default document with
+        the Brython scripts in its ``<head>``.
+        """
+        import brython  # Optional dependency, required only for use="brython".
+
+        # Locate the JavaScript files shipped with the installed `brython` package.
+        brython_path = Path(brython.__file__).parent
+        brython_js = brython_path / "data" / "brython.js"
+        brython_stdlib_js = brython_path / "data" / "brython_stdlib.js"
+
+        # Serve the brython scripts from where the package installed them.
+        self.add_static_file("/brython.js", brython_js)
+        self.add_static_file("/brython_stdlib.js", brython_stdlib_js)
+
+        # Serve the kopis package at the URLs Brython's import system expects,
+        # so e.g. ``from kopis.brython.browser import ...`` in client.py resolves.
+        kopis_path = Path(__file__).resolve().parent
+        self.add_static_file("/kopis/__init__.py", kopis_path / "__init__.py")
+        self.add_static_file(
+            "/kopis/brython/__init__.py", kopis_path / "brython" / "__init__.py"
+        )
+        self.add_static_file(
+            "/kopis/brython/browser.py", kopis_path / "brython" / "browser.py"
+        )
+
+        self.document = """
+<html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+
+    <body>
+    </body>
+</html>
+"""
+
+        with self.document["head"] as el:
+            el.add(
+                '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            )
+            el.add(f'<script type="text/javascript" src="{brython_js.name}"></script>')
+            el.add(
+                f'<script type="text/javascript" src="{brython_stdlib_js.name}"></script>'
+            )
 
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """Serve a single file at the URL ``path``.
