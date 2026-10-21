@@ -136,7 +136,7 @@ class Document:
             raise AttributeError(str(exc)) from exc
 
     def __str__(self) -> str:
-        return self._owner.document_text()
+        return str(self._owner._parse())
 
     def __enter__(self) -> Self:
         return self
@@ -229,7 +229,12 @@ class Kopis:
     @document.setter
     def document(self, value: str) -> None:
         self._document = value
-        self._soup = None
+        self._soup = BeautifulSoup(value, "html.parser")
+
+    @property
+    def soup(self) -> BeautifulSoup:
+        """The document parsed with Beautiful Soup."""
+        return self._parse()
 
     def document_text(self) -> str:
         """The raw HTML text of the document.
@@ -341,17 +346,18 @@ class Kopis:
 
         self.app.router.add_get(path, _handler)
 
-    async def _serve_document(
-        self, _request: web.Request
-    ) -> web.Response | web.FileResponse:
-        if self._document is not None:
-            return web.Response(text=self._document, content_type="text/html")
+    async def _serve_document(self, _request: web.Request) -> web.Response:
+        """Serve the document, rendered as valid HTML.
 
-        index = self.root / "index.html"
-        if index.is_file():
-            return web.FileResponse(index)
-
-        raise web.HTTPNotFound()
+        The document text (in-memory or ``index.html``) is parsed with
+        Beautiful Soup and re-serialized, so the browser always receives
+        a canonical, valid form of the document.
+        """
+        try:
+            html = str(self._parse())
+        except FileNotFoundError:
+            raise web.HTTPNotFound()
+        return web.Response(text=html, content_type="text/html")
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
         web.run_app(self.app, host=host, port=port)
