@@ -10,5 +10,6 @@ if platform.python_implementation() != 'Brython':
     from .kopis import Document, Element, Kopis
 else:
     # Client
-    from .brython.browser import document  # noqa: F401
+    from .brython.browser import document, aio  # noqa: F401
+    from .brython import javascript  # noqa: F401
     from .client import Kopis

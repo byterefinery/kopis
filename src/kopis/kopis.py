@@ -476,16 +476,12 @@ class Kopis:
 
         # Serve the kopis package at the URLs Brython's import system expects,
         # so e.g. ``from kopis.brython.browser import ...`` in client.py resolves.
+        # Every ``.py`` file in the package is served at its corresponding URL,
+        # so any module the client imports (including subpackages) exists.
         kopis_path = Path(__file__).resolve().parent
-        self.add_static_file("/kopis/__init__.py", kopis_path / "__init__.py")
-        self.add_static_file(
-            "/kopis/brython/__init__.py", kopis_path / "brython" / "__init__.py"
-        )
-        self.add_static_file(
-            "/kopis/brython/browser.py", kopis_path / "brython" / "browser.py"
-        )
-        self.add_static_file("/kopis/client.py", kopis_path / "client.py")
-        self.add_static_file("/kopis/serialize.py", kopis_path / "serialize.py")
+        for file in sorted(kopis_path.rglob("*.py")):
+            url = "/kopis/" + file.relative_to(kopis_path).as_posix()
+            self.add_static_file(url, file)
 
         self.document = """
             <html>

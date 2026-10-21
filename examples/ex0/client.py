@@ -1,5 +1,4 @@
-from browser import aio  # ty: ignore[unresolved-import]
-from kopis import Kopis, document
+from kopis import Kopis, document, aio
 
 from demo0 import f
 
