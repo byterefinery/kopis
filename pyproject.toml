@@ -4,7 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
     "aiohttp>=3.14",
+    "aiohttp-session>=2.12.1",
     "beautifulsoup4>=4.15.0",
+    "cryptography>=50.0.2",
 ]
 
 [build-system]

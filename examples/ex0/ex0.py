@@ -7,14 +7,16 @@ k = Kopis(use="brython")
 
 
 @k.bind
-def server_button_click(e):
-    # print('server_button_click', e)
-    # return 23
-    v = k.rpc.client_button_click('server_button_click', e, e=e)
+async def server_button_click(name, e, point):
+    # `e` (a DOM event) and `point` (a client-side type) arrive as plain
+    # JSON data; `point` was converted by its to_json() method. Inside
+    # this bound function, k.rpc targets the client that called us.
+    v = await k.rpc.client_button_click(name, point)
+    print('server_button_click', v)
     return v
 
 
-with k.document.body as el:
+with k.document.body as el:  # ty: ignore[unresolved-attribute]
     el.append('''
         <button id="btn0">
             Demo
@@ -25,4 +27,4 @@ with k.document.body as el:
 
 
 f(k)
-k.run()
+k.run()  # ty: ignore[unresolved-attribute]

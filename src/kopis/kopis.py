@@ -2,15 +2,27 @@
 
 __all__ = ["Document", "Element", "Kopis"]
 
-import sys
+import asyncio
+import contextvars
 import inspect
+import itertools
+import json
+import os
+import sys
+import time
+import uuid
+from collections.abc import Callable
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Self
 
 from aiohttp import web
+from aiohttp_session import Session, get_session, setup
+from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from bs4 import BeautifulSoup, Tag
 from bs4.builder import HTMLTreeBuilder
+
+from .serialize import RpcError, decode, encode
 
 
 def _entry_script_dir() -> Path | None:
@@ -177,6 +189,22 @@ class Element:
         return None
 
 
+class _Rpc:
+    """Proxy for ``k.rpc``: ``k.rpc.name(args)`` calls a client function."""
+
+    def __init__(self, owner: Kopis) -> None:
+        self._owner = owner
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        async def call(*args: object, **kwargs: object) -> object:
+            return await self._owner._call_client(name, args, kwargs)
+
+        return call
+
+
 class Kopis:
     """A web application served from a root directory.
 
@@ -194,6 +222,15 @@ class Kopis:
     with `Brython <https://brython.info>`_: the Brython scripts and the
     modules of the ``kopis`` package are served, and a default document
     loading the Brython scripts is created.
+
+    RPC: decorate a server function with ``@k.bind`` to make it callable
+    from the client as ``await k.rpc.<name>(...)``. Clients register
+    their own functions the same way, and the server can call them back
+    with ``await k.rpc.<name>(...)`` (inside a bound function, which
+    targets the calling client) or ``k.call(client_id, ...)``.
+    Clients are identified by an encrypted session cookie, and all
+    exchanged data is plain JSON (custom types are converted via their
+    ``to_json()`` method).
     """
 
     def __init__(
@@ -208,10 +245,29 @@ class Kopis:
 
         self._document: str | None = None
         self._soup: BeautifulSoup | None = None
+
+        # RPC state.
+        self._bound: dict[str, Callable] = {}
+        self._clients: dict[str, float] = {}
+        self._pending_calls: dict[str, list[dict]] = {}
+        self._pending_results: dict[int, asyncio.Future] = {}
+        self._next_call_id = itertools.count(1)
+        self._current_client: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+            "kopis_current_client", default=None
+        )
+        self.rpc = _Rpc(self)
+
         self.app = web.Application()
+        # Sessions (cookie-based) identify which client a request comes from.
+        setup(
+            self.app,
+            EncryptedCookieStorage(os.urandom(32), cookie_name="kopis_session"),
+        )
 
         # Registered before the static route so that it takes precedence on ``/``.
         self.app.router.add_get("/", self._serve_document)
+        self.app.router.add_post("/__kopis__/rpc", self._rpc)
+        self.app.router.add_post("/__kopis__/rpc/poll", self._rpc_poll)
 
         self.app.router.add_static("/", self.root, follow_symlinks=True)
 
@@ -276,6 +332,127 @@ class Kopis:
         self._document = text[:offset] + fragment + text[offset:]
         self._soup = None
 
+    def bind(self, func) -> Callable:
+        """Register a function so that clients can call it via ``k.rpc``.
+
+        The function is called with the JSON-decoded arguments sent by the
+        client; inside it, ``k.rpc`` targets the client that made the call::
+
+            @k.bind
+            async def add(x, y):
+                return x + y
+        """
+        self._bound[func.__name__] = func
+        return func
+
+    def call(
+        self, client_id: str, method: str, *args: object, **kwargs: object
+    ) -> asyncio.Future:
+        """Queue a call to a function the client registered with :meth:`bind`.
+
+        Returns a future that resolves with the client's return value, or
+        raises :class:`~kopis.serialize.RpcError` if the call failed there.
+        Requires a running event loop.
+        """
+        call_id = next(self._next_call_id)
+        self._pending_calls.setdefault(client_id, []).append(
+            {"id": call_id, "method": method, "args": list(args), "kwargs": kwargs}
+        )
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pending_results[call_id] = future
+        return future
+
+    async def _call_client(self, method: str, args: tuple, kwargs: dict) -> object:
+        """Call a client function on the client that is currently being served."""
+        client_id = self._current_client.get()
+        if client_id is None:
+            raise RuntimeError(
+                "k.rpc can only be used inside a function called by a client; "
+                "use k.call(client_id, ...) to target a client explicitly"
+            )
+        return await self.call(client_id, method, *args, **kwargs)
+
+    @property
+    def clients(self) -> dict[str, float]:
+        """Client ids (session cookies) with their last activity time."""
+        return dict(self._clients)
+
+    def _ensure_client_id(self, session: Session) -> str:
+        client_id = session.get("client_id")
+        if client_id is None:
+            client_id = uuid.uuid4().hex
+            session["client_id"] = client_id
+        self._clients[client_id] = time.time()
+        return client_id
+
+    def _json(self, payload: object) -> web.Response:
+        """Serialize ``payload`` to a JSON response (custom types allowed)."""
+        return web.Response(text=encode(payload), content_type="application/json")
+
+    async def _rpc(self, request: web.Request) -> web.Response:
+        """Handle a client -> server RPC call (POST /__kopis__/rpc)."""
+        session = await get_session(request)
+        client_id = self._ensure_client_id(session)
+        try:
+            msg = decode(await request.text())
+            method: str = msg["method"]
+            args: list = msg.get("args", [])
+            kwargs: dict = msg.get("kwargs", {})
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise web.HTTPBadRequest(text=f"bad RPC request: {exc}")
+
+        func = self._bound.get(method)
+        if func is None:
+            return self._json(
+                {
+                    "error": {
+                        "type": "NameError",
+                        "message": f"no function {method!r} bound on the server",
+                    }
+                }
+            )
+
+        token = self._current_client.set(client_id)
+        try:
+            try:
+                result = func(*args, **kwargs)
+                if inspect.iscoroutine(result):
+                    result = await result
+                payload: dict = {"result": result}
+            except Exception as exc:  # noqa: BLE001 - report any failure to the client
+                payload = {"error": {"type": type(exc).__name__, "message": str(exc)}}
+        finally:
+            self._current_client.reset(token)
+        return self._json(payload)
+
+    async def _rpc_poll(self, request: web.Request) -> web.Response:
+        """Handle a client poll (POST /__kopis__/rpc/poll).
+
+        The client submits the results of calls it ran and receives the
+        batch of calls queued for functions it registered with
+        :meth:`bind`.
+        """
+        session = await get_session(request)
+        client_id = self._ensure_client_id(session)
+        try:
+            msg = decode(await request.text())
+            results: list = msg.get("results", [])
+        except (json.JSONDecodeError, TypeError):
+            raise web.HTTPBadRequest(text="bad poll request")
+
+        for res in results:
+            future = self._pending_results.pop(res.get("id"), None)
+            if future is None or future.done():
+                continue
+            if "error" in res:
+                err = res["error"]
+                future.set_exception(RpcError(err.get("type", "Error"), err.get("message", "")))
+            else:
+                future.set_result(res.get("result"))
+
+        calls = self._pending_calls.pop(client_id, [])
+        return self._json({"calls": calls})
+
     def _setup_brython(self) -> None:
         """Set up the app to run client-side code with Brython.
 
@@ -307,6 +484,8 @@ class Kopis:
         self.add_static_file(
             "/kopis/brython/browser.py", kopis_path / "brython" / "browser.py"
         )
+        self.add_static_file("/kopis/client.py", kopis_path / "client.py")
+        self.add_static_file("/kopis/serialize.py", kopis_path / "serialize.py")
 
         self.document = """
             <html>
@@ -346,17 +525,21 @@ class Kopis:
 
         self.app.router.add_get(path, _handler)
 
-    async def _serve_document(self, _request: web.Request) -> web.Response:
+    async def _serve_document(self, request: web.Request) -> web.Response:
         """Serve the document, rendered as valid HTML.
 
         The document text (in-memory or ``index.html``) is parsed with
         Beautiful Soup and re-serialized, so the browser always receives
-        a canonical, valid form of the document.
+        a canonical, valid form of the document. The session cookie also
+        identifies the client that loads the document.
         """
         try:
             html = str(self._parse())
         except FileNotFoundError:
             raise web.HTTPNotFound()
+
+        session = await get_session(request)
+        self._ensure_client_id(session)
 
         return web.Response(text=html, content_type="text/html")
 

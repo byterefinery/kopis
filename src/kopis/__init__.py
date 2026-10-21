@@ -11,3 +11,4 @@ if platform.python_implementation() != 'Brython':
 else:
     # Client
     from .brython.browser import document  # noqa: F401
+    from .client import Kopis
