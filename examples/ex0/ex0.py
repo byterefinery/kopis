@@ -6,6 +6,7 @@ from demo0 import f
 k = Kopis(use="brython")
 
 
+# @k.bind
 def server_button_click(e):
     print('server_button_click', e)
     return 23
