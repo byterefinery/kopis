@@ -106,9 +106,9 @@ class Document:
     with either subscripting or attribute access; both return an
     :class:`Element` for the first element with that name::
 
-        k.document["head"].add('<meta name="viewport" content="...">')
+        k.document["head"].append('<meta name="viewport" content="...">')
         with k.document.body as el:
-            el.add("<script src=...></script>")
+            el.append("<script src=...></script>")
     """
 
     def __init__(self, owner: Kopis) -> None:
@@ -156,15 +156,15 @@ class Element:
         self._document = document
         self.tag = tag
 
-    def add(self, *html: str) -> Element:
-        """Add one or more HTML elements as children of this element.
+    def append(self, *html: str) -> Element:
+        """Append one or more HTML elements as children of this element.
 
         Each fragment is parsed with Beautiful Soup to validate it, then
         inserted as-is just before this element's end tag, so the rest of
         the document is preserved exactly. Returns ``self`` so calls can
         be chained::
 
-            k.document["head"].add("<a/>").add("<b/>")
+            k.document["head"].append("<a/>").append("<b/>")
         """
         for fragment in html:
             self._document._owner._insert_into(self.tag, fragment)
@@ -186,7 +186,7 @@ class Kopis:
     string assigned to ``k.document``, or the ``index.html`` file in the
     root directory. ``k.document`` also gives a :class:`Document` view
     that supports adding HTML elements to existing elements, e.g.
-    ``k.document["head"].add("<script src=...></script>")``, and
+    ``k.document["head"].append("<script src=...></script>")``, and
     :meth:`add_static_file` serves files from anywhere on disk at a
     chosen URL.
 
@@ -315,11 +315,13 @@ class Kopis:
 """
 
         with self.document["head"] as el:
-            el.add(
+            el.append(
                 '<meta name="viewport" content="width=device-width, initial-scale=1">'
             )
-            el.add(f'<script type="text/javascript" src="{brython_js.name}"></script>')
-            el.add(
+            el.append(
+                f'<script type="text/javascript" src="{brython_js.name}"></script>'
+            )
+            el.append(
                 f'<script type="text/javascript" src="{brython_stdlib_js.name}"></script>'
             )
 
