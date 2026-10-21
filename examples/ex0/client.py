@@ -34,9 +34,10 @@ def btn0_click(e):
         v = await k.rpc.server_button_click('btn0_click', e, Point(3, 4))
         print('btn0_click result:', v)
         document <= f'\n{v!s}'  # noqa: B015 (Brython's <= sets element text)
+        return v
 
-    aio.run(roundtrip())
-    print('btn0_click end')
+    v = aio.run(roundtrip())
+    print('btn0_click end', v)
 
 
 document.querySelector('#btn0').bind('click', btn0_click)
