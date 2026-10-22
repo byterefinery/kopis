@@ -1,10 +1,11 @@
 """Kopis: pure-Python web development (client side).
 
 This is the client-side half of the ``kopis`` package: it runs in the
-browser under Brython. It is a different implementation from the
-server-side half: no document, no root directory, no web app. It only
-provides the RPC client (:class:`Kopis`) and the browser objects client
-code works with (:data:`document`, :data:`aio`, :data:`javascript`).
+browser under Brython. It shares its API with the server-side half (the
+``kopis.server`` subpackage); only the implementation differs: no web
+server, no root directory. ``k.run()`` and ``k.add_static_file()`` are
+no-ops here; ``k.document`` is a live view of the browser document; and
+``k.bind``/``k.rpc`` implement the RPC client half.
 
 Calls from the server to functions registered with :meth:`Kopis.bind`
 arrive over a Server-Sent Events stream (``EventSource`` on
@@ -14,13 +15,13 @@ through ``browser.aio`` and the browser's implicit event loop drives
 everything; ``aio.run`` starts a coroutine without blocking.
 """
 
-__all__ = ["Kopis", "aio", "document", "javascript"]
+__all__ = ["Document", "Element", "Kopis", "RpcError", "aio", "document", "javascript"]
 
 import inspect
 import json
 import platform
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Self
 
 try:
     from dataclasses import asdict, is_dataclass
@@ -102,6 +103,110 @@ _RETRY_DELAY = 1.0  # pause before retrying a failed results POST
 _DONE_CAP = 1000  # completed calls remembered, to deduplicate replayed calls
 
 
+class Element:
+    """A reference to an element of the browser document.
+
+    The unified document API works the same way as on the server:
+    :meth:`append` adds HTML elements, ``<=`` adds content, and
+    :meth:`bind` attaches an event handler. Any other attribute is
+    delegated to the underlying DOM element, so all DOM properties and
+    methods (``id``, ``innerHTML``, ``value``, ...) work as-is.
+    """
+
+    def __init__(self, element: Any) -> None:
+        self._element = element
+
+    def append(self, *html: str) -> Element:
+        """Append one or more HTML elements as children of this element.
+
+        Each fragment is inserted as-is just before this element's end
+        tag. Returns ``self`` so calls can be chained::
+
+            k.document.body.append("<a/>").append("<b/>")
+        """
+        for fragment in html:
+            fragment = fragment.strip()
+            if not fragment:
+                continue
+            self._element.insertAdjacentHTML("beforeend", fragment)
+        return self
+
+    def bind(self, event: str, handler: Callable) -> Any:
+        """Bind an event handler to this element (delegates to the DOM)."""
+        return self._element.bind(event, handler)
+
+    def __le__(self, content: object) -> None:
+        """Append ``content`` as a child of this element."""
+        self._element <= content  # noqa: B015 (Brython's <= adds a child)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> Any:
+        # Only called when normal attribute lookup fails. Dunder lookups
+        # (pickle, copy, introspection) must keep failing as usual, and
+        # ``_element`` is guarded to avoid infinite recursion on a
+        # half-initialized instance.
+        if name == "_element" or (name.startswith("__") and name.endswith("__")):
+            raise AttributeError(name)
+        return getattr(self._element, name)
+
+
+class Document:
+    """A live view of the browser document.
+
+    The unified document API works the same way as on the server: look up
+    an element by tag name with either subscripting or attribute access,
+    or by CSS selector with :meth:`querySelector`; both return an
+    :class:`Element`::
+
+        with k.document.body as el:
+            el.append("<button id=...></button>")
+        k.document.querySelector("#btn0").bind("click", handler)
+    """
+
+    def __init__(self, document: Any) -> None:
+        self._document = document
+
+    def _element(self, name: str) -> Element:
+        try:
+            return Element(getattr(self._document, name))
+        except AttributeError as exc:
+            raise AttributeError(f"no <{name}> element in the document") from exc
+
+    def querySelector(self, selector: str) -> Element | None:
+        """Return the first element matching ``selector``, or ``None``."""
+        element = self._document.querySelector(selector)
+        if element is None:
+            return None
+        return Element(element)
+
+    def __getitem__(self, name: str) -> Element:
+        return self._element(name)
+
+    def __getattr__(self, name: str) -> Element:
+        # Only called when normal attribute lookup fails. Dunder lookups
+        # (pickle, copy, introspection) must keep failing as usual, and
+        # ``_document`` is guarded to avoid infinite recursion on a
+        # half-initialized instance.
+        if name == "_document" or (name.startswith("__") and name.endswith("__")):
+            raise AttributeError(name)
+        return self._element(name)
+
+    def __le__(self, content: object) -> None:
+        """Append ``content`` to the document (its body)."""
+        self._document <= content  # noqa: B015 (Brython's <= adds to the document)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
 class _Rpc:
     """Proxy for ``k.rpc``: ``k.rpc.name(args)`` calls the server's function."""
 
@@ -125,12 +230,14 @@ class _Rpc:
 
 
 class Kopis:
-    """The client half of a kopis RPC pair.
+    """A kopis application, client side.
 
-    Instantiate it in client code::
+    Instantiate it in app code (the same code runs on the server, where
+    :meth:`run` starts the web server, and in the browser, where it is a
+    no-op)::
 
         from kopis import Kopis
-        k = Kopis()
+        k = Kopis(use="brython")
 
         @k.bind
         async def client_fn(x): ...         # callable from the server
@@ -142,7 +249,7 @@ class Kopis:
     as soon as they are ready.
     """
 
-    def __init__(self, use: str | None = None) -> None:
+    def __init__(self, root: object = None, use: str | None = None) -> None:
         if use not in (None, "brython"):
             raise ValueError(f"unknown value for use: {use!r}")
         self._bound: dict[str, Callable[..., Any]] = {}
@@ -155,10 +262,21 @@ class Kopis:
         self._source.bind("call", self._on_call)
         self._source.bind("error", self._on_error)
 
+    @property
+    def document(self) -> Document:
+        """A live view of the browser document."""
+        return Document(document)
+
     def bind(self, func) -> Callable[..., Any]:
-        """Register a function so the server can call it by name."""
+        """Register a function so the other side can call it by name."""
         self._bound[func.__name__] = func
         return func
+
+    def add_static_file(self, path: str, file_path: object) -> None:
+        """No-op on the client: files are served by the server."""
+
+    def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
+        """No-op on the client: the web server runs on the server side."""
 
     def close(self) -> None:
         """Close the event stream to the server."""

@@ -2,16 +2,19 @@
 
 This is the server-side half of the ``kopis`` package: it runs on CPython
 and serves a web application — a root directory of static files, an HTML
-document at ``/``, and RPC to and from clients. The client-side half
-(the ``kopis.client`` subpackage) runs in the browser under Brython; with
-``Kopis(use="brython")`` the whole package is served to the browser, so
-``import kopis`` resolves to the client side there.
+document at ``/``, and RPC to and from clients. It shares its API with the
+client-side half (the ``kopis.client`` subpackage, which runs in the browser
+under Brython); only the implementation differs. With
+``Kopis(use="brython")`` the whole package is served to the browser and the
+running script is attached to the document, so ``import kopis`` in browser
+code resolves to the client side there.
 """
 
-__all__ = ["Document", "Element", "Kopis"]
+__all__ = ["Document", "Element", "Kopis", "RpcError", "aio"]
 
 import asyncio
 import contextvars
+import html
 import inspect
 import itertools
 import json
@@ -89,12 +92,12 @@ def decode(text: str) -> Any:
     return json.loads(text)
 
 
-def _entry_script_dir() -> Path | None:
-    """Return the directory of the running script, if determinable."""
+def _entry_script() -> Path | None:
+    """Return the path of the running script, if determinable."""
     argv0 = sys.argv[0] if sys.argv else ""
 
     if argv0 and Path(argv0).is_file():
-        return Path(argv0).resolve().parent
+        return Path(argv0).resolve()
 
     # Fall back to the file of the __main__ module on the call stack
     # (covers cases where sys.argv[0] is not a file, e.g. ``python -c``).
@@ -105,11 +108,17 @@ def _entry_script_dir() -> Path | None:
             file = frame.f_globals.get("__file__")
 
             if file:
-                return Path(file).resolve().parent
+                return Path(file).resolve()
 
         frame = frame.f_back
 
     return None
+
+
+def _entry_script_dir() -> Path | None:
+    """Return the directory of the running script, if determinable."""
+    entry = _entry_script()
+    return entry.parent if entry is not None else None
 
 
 #: Tags that never have children or an end tag.
@@ -183,8 +192,8 @@ class Document:
 
     The document is stored as a plain string; :mod:`beautifulsoup4` is
     used to parse it and locate elements. Look up an element by tag name
-    with either subscripting or attribute access; both return an
-    :class:`Element` for the first element with that name::
+    with either subscripting or attribute access, or by CSS selector
+    with :meth:`querySelector`; both return an :class:`Element`::
 
         k.document["head"].append('<meta name="viewport" content="...">')
         with k.document.body as el:
@@ -199,6 +208,13 @@ class Document:
         if tag is None:
             raise KeyError(f"no <{name}> element in the document")
         return Element(self, tag)
+
+    def querySelector(self, selector: str) -> Element | None:
+        """Return the first element matching ``selector``, or ``None``."""
+        tag = self._owner._parse().select(selector)
+        if not tag:
+            return None
+        return Element(self, tag[0])
 
     def __getitem__(self, name: str) -> Element:
         return self._element(name)
@@ -217,6 +233,10 @@ class Document:
 
     def __str__(self) -> str:
         return str(self._owner._parse())
+
+    def __le__(self, content: object) -> None:
+        """Append ``content`` as text to the document (its body)."""
+        self.body <= content  # noqa: B015 (<= appends to the document)
 
     def __enter__(self) -> Self:
         return self
@@ -250,11 +270,62 @@ class Element:
             self._document._owner._insert_into(self.tag, fragment)
         return self
 
+    def bind(self, event: str, handler: Callable) -> Element:
+        """Bind an event handler to this element.
+
+        The server has no live DOM, so this is a no-op; the handler takes
+        effect when the same code runs in the browser.
+        """
+        return self
+
+    def __le__(self, content: object) -> None:
+        """Append ``content`` as text to this element."""
+        self._document._owner._insert_into(self.tag, str(content), is_text=True)
+
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
         return None
+
+
+class _Noop:
+    """A no-op stand-in for the document (and its elements) on the server.
+
+    In brython mode the document is built in the browser, where the same
+    application code runs under Brython. Document operations therefore do
+    nothing on the server (but never fail), so the unified application
+    code can run unmodified on both sides.
+    """
+
+    def append(self, *html: str) -> Self:
+        return self
+
+    def bind(self, event: str, handler: Callable) -> Self:
+        return self
+
+    def querySelector(self, selector: str) -> Self:
+        return self
+
+    def __getitem__(self, name: object) -> Self:
+        return self
+
+    def __le__(self, content: object) -> None:
+        return None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> Self:
+        # Any attribute (e.g. ``body``, ``head``) resolves to the same
+        # no-op, so chained lookups keep working. Dunder lookups must keep
+        # failing as usual.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self
 
 
 class _Rpc:
@@ -310,13 +381,16 @@ class Kopis:
     ``use="brython"`` configures the app to run client-side Python code
     with `Brython <https://brython.info>`_: the Brython scripts and the
     modules of the ``kopis`` package are served, and a default document
-    loading the Brython scripts is created.
+    loading the Brython scripts is created. The running script (the app)
+    is attached to the document as a Brython script, so the same
+    application code runs in the browser under Brython. In brython mode
+    the document is built in the browser, so ``k.document`` is a no-op
+    view on the server.
 
-    RPC: decorate a server function with ``@k.bind`` to make it callable
-    from the client as ``await k.rpc.<name>(...)``. Clients register
-    their own functions the same way, and the server can call them back
-    with ``await k.rpc.<name>(...)`` (inside a bound function, which
-    targets the calling client) or ``k.call(client_id, ...)``. Calls to
+    RPC: decorate a function with ``@k.bind`` to make it callable from
+    the other side as ``await k.rpc.<name>(...)``. Inside a bound
+    function, ``k.rpc`` targets the client that made the call; calls can
+    also be sent explicitly with ``k.call(client_id, ...)``. Calls to
     client functions are pushed over a Server-Sent Events stream
     (``/__kopis__/rpc/events``); the client posts its results back to
     ``/__kopis__/rpc/results`` as soon as they are ready. Clients are
@@ -337,6 +411,7 @@ class Kopis:
 
         self._document: str | None = None
         self._soup: BeautifulSoup | None = None
+        self._noop = _Noop()
 
         # RPC state.
         self._bound: dict[str, Callable] = {}
@@ -368,12 +443,21 @@ class Kopis:
         if use not in (None, "brython"):
             raise ValueError(f"unknown value for use: {use!r}")
 
-        if use == "brython":
+        self._brython = use == "brython"
+
+        if self._brython:
             self._setup_brython()
 
     @property
-    def document(self) -> Document:
-        """A live view of the HTML document served at ``/``."""
+    def document(self) -> Document | _Noop:
+        """A live view of the HTML document served at ``/``.
+
+        In brython mode the document is built in the browser (by the same
+        application code running under Brython), so this view is a no-op
+        on the server.
+        """
+        if self._brython:
+            return self._noop
         return Document(self)
 
     @document.setter
@@ -407,23 +491,27 @@ class Kopis:
             self._soup = BeautifulSoup(self.document_text(), "html.parser")
         return self._soup
 
-    def _insert_into(self, tag: Tag, fragment: str) -> None:
-        fragment = fragment.strip()
-        if not fragment:
-            return
-
+    def _insert_into(self, tag: Tag, fragment: str, is_text: bool = False) -> None:
         if tag.name in _VOID_TAGS:
             raise ValueError(f"cannot add children to <{tag.name}>")
 
-        # Parse the fragment with Beautiful Soup to validate it and to
-        # confirm it actually contains elements.
-        soup = BeautifulSoup(fragment, "html.parser")
-        if not any(isinstance(c, Tag) for c in soup.children):
-            return
+        if is_text:
+            # Raw text is inserted as-is (escaped); no HTML validation.
+            body = html.escape(fragment)
+        else:
+            body = fragment.strip()
+            if not body:
+                return
+
+            # Parse the fragment with Beautiful Soup to validate it and to
+            # confirm it actually contains elements.
+            soup = BeautifulSoup(fragment, "html.parser")
+            if not any(isinstance(c, Tag) for c in soup.children):
+                return
 
         text = self.document_text()
         offset = _insertion_offset(text, tag)
-        self._document = text[:offset] + fragment + text[offset:]
+        self._document = text[:offset] + body + text[offset:]
         self._soup = None
 
     def bind(self, func) -> Callable:
@@ -620,10 +708,13 @@ class Kopis:
         Serves the JavaScript files of the installed ``brython`` package
         at ``/brython.js`` and ``/brython_stdlib.js``, serves the whole
         ``kopis`` package at the URLs Brython's import system expects
-        (so e.g. ``from kopis import ...`` in client code resolves), and
+        (so e.g. ``from kopis import ...`` in app code resolves),
         initializes a default document with the Brython scripts in its
-        ``<head>``. The package's ``__init__`` differentiates the sides,
-        so ``import kopis`` in browser code picks the client side.
+        ``<head>``, and attaches the running script (the app) to the
+        document as a Brython script, so the same application code runs
+        in the browser under Brython. The package's ``__init__``
+        differentiates the sides, so ``import kopis`` in browser code
+        picks the client side.
         """
         import brython  # Optional dependency, required only for use="brython".
 
@@ -637,7 +728,7 @@ class Kopis:
         self.add_static_file("/brython_stdlib.js", brython_stdlib_js)
 
         # Serve the `kopis` package at the URLs Brython's import system
-        # expects, so e.g. ``from kopis import Kopis`` in client.py
+        # expects, so e.g. ``from kopis import Kopis`` in app code
         # resolves. Every ``.py`` file in the package is served at its
         # corresponding URL, so any module the client imports exists.
         # This file lives in ``kopis/server/``, so the package root is
@@ -658,7 +749,12 @@ class Kopis:
             </html>
         """
 
-        with self.document["head"] as el:
+        # The real (source) view is used for the framework's own setup;
+        # the ``k.document`` property is a no-op in brython mode because
+        # the document is built in the browser.
+        doc = Document(self)
+
+        with doc["head"] as el:
             el.append(
                 '<meta name="viewport" content="width=device-width, initial-scale=1">'
             )
@@ -668,6 +764,13 @@ class Kopis:
             el.append(
                 f'<script type="text/javascript" src="{brython_stdlib_js.name}"></script>'
             )
+
+        # Attach the running script (the app) as a Brython script, so the
+        # same application code runs in the browser under Brython.
+        entry = _entry_script()
+        if entry is not None and entry.is_file():
+            with doc["body"] as el:
+                el.append(f'<script type="text/python" src="/{entry.name}"></script>')
 
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """Serve a single file at the URL ``path``.

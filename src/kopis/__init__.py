@@ -15,17 +15,23 @@ running Python implementation:
 and to the client side in browser code. With ``Kopis(use="brython")``
 the server serves this whole package to the browser, so the same
 differentiation runs there.
+
+Both sides expose the same unified API — ``Kopis`` (with ``bind``,
+``rpc``, ``document``, ``add_static_file``, and ``run``), ``aio``, and
+``RpcError`` — so a single application file can run unmodified on both
+sides; only the implementations differ (e.g. ``k.run()`` starts the web
+server on the server and is a no-op on the client).
 """
 
 import platform
 
 if platform.python_implementation() == "Brython":
     # Client side: running in the browser under Brython.
-    from .client import Kopis, aio, document, javascript
+    from .client import Kopis, RpcError, aio, document, javascript
 
-    __all__ = ["Kopis", "aio", "document", "javascript"]
+    __all__ = ["Kopis", "RpcError", "aio", "document", "javascript"]
 else:
     # Server side: running on CPython.
-    from .server import Document, Element, Kopis
+    from .server import Document, Element, Kopis, RpcError, aio
 
-    __all__ = ["Document", "Element", "Kopis"]
+    __all__ = ["Document", "Element", "Kopis", "RpcError", "aio"]

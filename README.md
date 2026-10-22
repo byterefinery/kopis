@@ -13,12 +13,14 @@ Kopis runs Python on both ends of the web stack:
 
 ## Code layout
 
-The `kopis` package is imported on both sides of the web stack, and its `__init__.py` (`src/kopis/__init__.py`) differentiates the sides at import time based on the running Python implementation:
+The `kopis` package is imported on both sides of the web stack, and its `__init__.py` (`src/kopis/__init__.py`) differentiates the implementations at import time based on the running Python implementation:
 
-- `src/kopis/server/` — the **server-side** subpackage. Runs on CPython, provides the web application (root directory, HTML document, RPC). This is what `import kopis` resolves to in CPython code.
-- `src/kopis/client/` — the **client-side** subpackage. Runs in the browser under Brython; it has no web server, only the RPC client (`Kopis`) and the browser objects client code works with (`document`, `aio`, `javascript`). This is what `import kopis` resolves to in browser code.
+- `src/kopis/server/` — the **server-side** subpackage. Runs on CPython, provides the web application (root directory, HTML document, RPC) and starts the web server on `k.run()`.
+- `src/kopis/client/` — the **client-side** subpackage. Runs in the browser under Brython; it has no web server (`k.run()` is a no-op), only the RPC client and the browser objects client code works with (`document`, `aio`, `javascript`).
 
-With `Kopis(use="brython")`, the server serves the whole `kopis` package at `/kopis/...`, so `import kopis` in browser code runs the same differentiation and picks the client side.
+Both sides expose the **same unified API** — `Kopis` (with `bind`, `rpc`, `document`, `add_static_file`, and `run`), `aio`, and `RpcError` — so a single application file runs unmodified on both sides; only the implementations differ.
+
+A kopis application is a single Python file (e.g. `examples/ex0/app.py`). Running it with CPython starts the web server. With `Kopis(use="brython")`, the server serves the whole `kopis` package at `/kopis/...` and attaches the application file to the document as a Brython script, so the same code also runs in the browser under Brython (where `import kopis` picks the client side and the document is built on the live DOM). Developers write the unified code once and do not deal with the server/client split.
 
 ## Examples
 
@@ -26,5 +28,5 @@ Each example lives in its own directory and is run from within that directory us
 
 ```sh
 cd examples/ex0
-uv run server.py
+uv run app.py
 ```
