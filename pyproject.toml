@@ -11,8 +11,15 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["uv_build>=0.13.1,<0.14"]
-build-backend = "uv_build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The installed module is the server-side `kopis` module. The client-side
+# `kopis` module (src/client/kopis.py) is not importable by CPython: it
+# runs in the browser under Brython and is served to it over HTTP by the
+# server (see Kopis(use="brython")).
+[tool.hatch.build.targets.wheel]
+packages = ["src/server/kopis.py"]
 
 [dependency-groups]
 dev = [
@@ -23,3 +30,6 @@ dev = [
 
 [tool.ruff.lint]
 ignore = ["I001"]
+
+[tool.ty.analysis]
+allowed-unresolved-imports = ["browser", "javascript"]

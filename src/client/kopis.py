@@ -1,33 +1,86 @@
-"""Client-side (Brython) Kopis: RPC to the server.
+"""Kopis: pure-Python web development (client side).
 
-A much simpler class than the server-side ``Kopis``: it has no document,
-root directory, or web app. It only provides :meth:`bind` (register a
-local function so the server can call it) and the :attr:`rpc` proxy
-(call a function the server registered with ``@k.bind``).
+This is the client-side ``kopis`` module: it runs in the browser under
+Brython. It has the same name as the server-side ``kopis`` module but a
+different implementation: no document, no root directory, no web app.
+It only provides the RPC client (:class:`Kopis`) and the browser objects
+client code works with (:data:`document`, :data:`aio`, :data:`javascript`).
 
-Calls from the server to functions registered with :meth:`bind` arrive
-over a Server-Sent Events stream (``EventSource`` on
+Calls from the server to functions registered with :meth:`Kopis.bind`
+arrive over a Server-Sent Events stream (``EventSource`` on
 ``/__kopis__/rpc/events``); their results are posted back to the server
 (``/__kopis__/rpc/results``) as soon as they are ready. All HTTP goes
 through ``browser.aio`` and the browser's implicit event loop drives
 everything; ``aio.run`` starts a coroutine without blocking.
 """
 
+__all__ = ["Kopis", "aio", "document", "javascript"]
+
 import inspect
-import platform
+import javascript
+import json
 from collections.abc import Callable
 from typing import Any
 
-from .serialize import RpcError, decode, encode
+try:
+    from dataclasses import asdict, is_dataclass
+except ImportError:  # Interpreter without dataclasses support.
+    asdict = None
+    is_dataclass = None
 
-if platform.python_implementation() != 'Brython':
-    # Server: `aio` and `window` are Brython-only; stand-ins for type checkers.
-    from unittest.mock import MagicMock
+from browser import aio, document, window
 
-    aio = MagicMock()
-    window = MagicMock()
-else:
-    from browser import aio, window  # ty: ignore[unresolved-import]
+
+# --- Wire format, shared with the server-side `kopis` module ---------------
+#
+# RPC messages are JSON. Custom types participate by defining a
+# ``to_json()`` method that returns plain JSON-able data; dataclasses and
+# objects with a ``__dict__`` are converted to a dict of their attributes;
+# anything else falls back to ``str()``. Neither side assumes the other
+# side has the same types — a value always arrives on the receiving end
+# as plain JSON data (dicts, lists, strings, numbers).
+
+
+class RpcError(Exception):
+    """Raised when a remote function call failed on the other side."""
+
+    def __init__(self, type: str, message: str) -> None:
+        super().__init__(f"{type}: {message}")
+        self.type = type
+        self.message = message
+
+
+def _convert(value: object) -> object:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    to_json = getattr(value, "to_json", None)
+    if callable(to_json):
+        return _convert(to_json())
+    if (
+        is_dataclass is not None
+        and asdict is not None
+        and is_dataclass(value)
+        and not isinstance(value, type)
+    ):
+        return _convert(asdict(value))
+    if isinstance(value, dict):
+        return {key: _convert(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_convert(item) for item in value]
+    if hasattr(value, "__dict__"):
+        return _convert(vars(value))
+    return str(value)
+
+
+def encode(value: object) -> str:
+    """Serialize ``value`` to a JSON string, converting custom types to plain data."""
+    return json.dumps(_convert(value))
+
+
+def decode(text: str) -> Any:
+    """Parse a JSON string into plain Python values."""
+    return json.loads(text)
+
 
 RPC_URL = "/__kopis__/rpc"
 EVENTS_URL = "/__kopis__/rpc/events"

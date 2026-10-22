@@ -1,4 +1,12 @@
-"""Kopis: pure-Python web development."""
+"""Kopis: pure-Python web development (server side).
+
+This is the server-side ``kopis`` module: it runs on CPython and serves a
+web application — a root directory of static files, an HTML document at
+``/``, and RPC to and from clients. There is a client-side ``kopis``
+module (``src/client/kopis.py``) with the same name that runs in the
+browser under Brython; it is a different implementation served to the
+browser at ``/kopis.py``.
+"""
 
 __all__ = ["Document", "Element", "Kopis"]
 
@@ -14,7 +22,7 @@ import uuid
 from collections.abc import Callable
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 
 from aiohttp import web
 from aiohttp_session import Session, get_session, setup
@@ -23,7 +31,62 @@ from aiohttp_sse import EventSourceResponse
 from bs4 import BeautifulSoup, Tag
 from bs4.builder import HTMLTreeBuilder
 
-from .serialize import RpcError, decode, encode
+try:
+    from dataclasses import asdict, is_dataclass
+except ImportError:  # Interpreter without dataclasses support.
+    asdict = None
+    is_dataclass = None
+
+
+# --- Wire format, shared with the client-side `kopis` module -------------
+#
+# RPC messages are JSON. Custom types participate by defining a
+# ``to_json()`` method that returns plain JSON-able data; dataclasses and
+# objects with a ``__dict__`` are converted to a dict of their attributes;
+# anything else falls back to ``str()``. Neither side assumes the other
+# side has the same types — a value always arrives on the receiving end
+# as plain JSON data (dicts, lists, strings, numbers).
+
+
+class RpcError(Exception):
+    """Raised when a remote function call failed on the other side."""
+
+    def __init__(self, type: str, message: str) -> None:
+        super().__init__(f"{type}: {message}")
+        self.type = type
+        self.message = message
+
+
+def _convert(value: object) -> object:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    to_json = getattr(value, "to_json", None)
+    if callable(to_json):
+        return _convert(to_json())
+    if (
+        is_dataclass is not None
+        and asdict is not None
+        and is_dataclass(value)
+        and not isinstance(value, type)
+    ):
+        return _convert(asdict(value))
+    if isinstance(value, dict):
+        return {key: _convert(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_convert(item) for item in value]
+    if hasattr(value, "__dict__"):
+        return _convert(vars(value))
+    return str(value)
+
+
+def encode(value: object) -> str:
+    """Serialize ``value`` to a JSON string, converting custom types to plain data."""
+    return json.dumps(_convert(value))
+
+
+def decode(text: str) -> Any:
+    """Parse a JSON string into plain Python values."""
+    return json.loads(text)
 
 
 def _entry_script_dir() -> Path | None:
@@ -382,7 +445,7 @@ class Kopis:
         """Queue a call to a function the client registered with :meth:`bind`.
 
         Returns a future that resolves with the client's return value, or
-        raises :class:`~kopis.serialize.RpcError` if the call failed there.
+        raises :class:`RpcError` if the call failed there.
         The call is pushed to the client's open SSE stream at once, or held
         in the queue until the client (re)connects. Requires a running
         event loop.
@@ -555,11 +618,11 @@ class Kopis:
         """Set up the app to run client-side code with Brython.
 
         Serves the JavaScript files of the installed ``brython`` package
-        at ``/brython.js`` and ``/brython_stdlib.js``, serves the Python
-        modules of the ``kopis`` package at the URLs Brython's import
-        system expects (so e.g. ``from kopis.brython.browser import ...``
-        in client code resolves), and initializes a default document with
-        the Brython scripts in its ``<head>``.
+        at ``/brython.js`` and ``/brython_stdlib.js``, serves the
+        client-side ``kopis`` module (a separate module of the same name
+        that runs in the browser) at ``/kopis.py`` so that
+        ``from kopis import ...`` in client code resolves, and initializes
+        a default document with the Brython scripts in its ``<head>``.
         """
         import brython  # Optional dependency, required only for use="brython".
 
@@ -572,14 +635,14 @@ class Kopis:
         self.add_static_file("/brython.js", brython_js)
         self.add_static_file("/brython_stdlib.js", brython_stdlib_js)
 
-        # Serve the kopis package at the URLs Brython's import system expects,
-        # so e.g. ``from kopis.brython.browser import ...`` in client.py resolves.
-        # Every ``.py`` file in the package is served at its corresponding URL,
-        # so any module the client imports (including subpackages) exists.
-        kopis_path = Path(__file__).resolve().parent
-        for file in sorted(kopis_path.rglob("*.py")):
-            url = "/kopis/" + file.relative_to(kopis_path).as_posix()
-            self.add_static_file(url, file)
+        # Serve the client-side `kopis` module at the URL Brython's import
+        # system expects, so e.g. ``from kopis import Kopis`` in client.py
+        # resolves. It lives next to this module's source root:
+        # src/{server,client}/kopis.py.
+        client_kopis = Path(__file__).resolve().parent.parent / "client" / "kopis.py"
+        if not client_kopis.is_file():
+            raise FileNotFoundError(client_kopis)
+        self.add_static_file("/kopis.py", client_kopis)
 
         self.document = """
             <html>

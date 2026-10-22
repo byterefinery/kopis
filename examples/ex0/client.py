@@ -1,4 +1,4 @@
-from kopis import Kopis, document, aio
+from kopis import Kopis, document, aio  # ty: ignore[unresolved-import]
 
 from demo0 import f
 
