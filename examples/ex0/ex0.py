@@ -16,7 +16,7 @@ async def server_button_click(name, e, point):
     return v
 
 
-with k.document.body as el:
+with k.document.body as el:  # ty: ignore[unresolved-attribute]
     el.append('''
         <button id="btn0">
             Demo
@@ -27,4 +27,4 @@ with k.document.body as el:
 
 
 f(k)
-k.run()
+k.run()  # ty: ignore[unresolved-attribute]

@@ -1,10 +1,10 @@
 """Kopis: pure-Python web development (client side).
 
-This is the client-side ``kopis`` module: it runs in the browser under
-Brython. It has the same name as the server-side ``kopis`` module but a
-different implementation: no document, no root directory, no web app.
-It only provides the RPC client (:class:`Kopis`) and the browser objects
-client code works with (:data:`document`, :data:`aio`, :data:`javascript`).
+This is the client-side half of the ``kopis`` package: it runs in the
+browser under Brython. It is a different implementation from the
+server-side half: no document, no root directory, no web app. It only
+provides the RPC client (:class:`Kopis`) and the browser objects client
+code works with (:data:`document`, :data:`aio`, :data:`javascript`).
 
 Calls from the server to functions registered with :meth:`Kopis.bind`
 arrive over a Server-Sent Events stream (``EventSource`` on
@@ -17,8 +17,8 @@ everything; ``aio.run`` starts a coroutine without blocking.
 __all__ = ["Kopis", "aio", "document", "javascript"]
 
 import inspect
-import javascript
 import json
+import platform
 from collections.abc import Callable
 from typing import Any
 
@@ -28,10 +28,22 @@ except ImportError:  # Interpreter without dataclasses support.
     asdict = None
     is_dataclass = None
 
-from browser import aio, document, window
+if platform.python_implementation() == "Brython":
+    # Client: `browser` and `javascript` are Brython built-in modules.
+    from browser import aio, document, window
+    import javascript
+else:
+    # Server: `aio`, `document`, `window`, and `javascript` are Brython-only;
+    # stand-ins keep this subpackage importable under CPython.
+    from unittest.mock import MagicMock
+
+    aio = MagicMock()
+    document = MagicMock()
+    window = MagicMock()
+    javascript = MagicMock()
 
 
-# --- Wire format, shared with the server-side `kopis` module ---------------
+# --- Wire format, shared with the server-side `kopis` subpackage -----------
 #
 # RPC messages are JSON. Custom types participate by defining a
 # ``to_json()`` method that returns plain JSON-able data; dataclasses and

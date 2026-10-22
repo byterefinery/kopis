@@ -13,12 +13,12 @@ Kopis runs Python on both ends of the web stack:
 
 ## Code layout
 
-The `kopis` module exists in two versions — same name, different meaning and implementation — in separate directories:
+The `kopis` package is imported on both sides of the web stack, and its `__init__.py` (`src/kopis/__init__.py`) differentiates the sides at import time based on the running Python implementation:
 
-- `src/server/kopis.py` — the **server-side** module. Runs on CPython, provides the web application (root directory, HTML document, RPC) and is what `import kopis` resolves to in CPython code.
-- `src/client/kopis.py` — the **client-side** module. Runs in the browser under Brython; it has no web server, only the RPC client (`Kopis`) and the browser objects client code works with (`document`, `aio`, `javascript`). It is never imported by CPython.
+- `src/kopis/server/` — the **server-side** subpackage. Runs on CPython, provides the web application (root directory, HTML document, RPC). This is what `import kopis` resolves to in CPython code.
+- `src/kopis/client/` — the **client-side** subpackage. Runs in the browser under Brython; it has no web server, only the RPC client (`Kopis`) and the browser objects client code works with (`document`, `aio`, `javascript`). This is what `import kopis` resolves to in browser code.
 
-With `Kopis(use="brython")`, the server serves the client-side module at `/kopis.py`, so `import kopis` in browser code resolves to the client-side module.
+With `Kopis(use="brython")`, the server serves the whole `kopis` package at `/kopis/...`, so `import kopis` in browser code runs the same differentiation and picks the client side.
 
 ## Examples
 

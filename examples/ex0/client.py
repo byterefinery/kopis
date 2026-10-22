@@ -1,4 +1,4 @@
-from kopis import Kopis, document, aio  # ty: ignore[unresolved-import]
+from kopis import Kopis, document, aio
 
 from demo0 import f
 
@@ -20,7 +20,7 @@ class Point:
 
 
 @k.bind
-async def client_button_click(name, point):
+async def client_button_click(name: str, point: Point):
     # Called by the server; `point` is plain data ({"x":..., "y":...}).
     print('client_button_click', name, point)
     return 29

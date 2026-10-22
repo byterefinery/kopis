@@ -1,11 +1,11 @@
 """Kopis: pure-Python web development (server side).
 
-This is the server-side ``kopis`` module: it runs on CPython and serves a
-web application — a root directory of static files, an HTML document at
-``/``, and RPC to and from clients. There is a client-side ``kopis``
-module (``src/client/kopis.py``) with the same name that runs in the
-browser under Brython; it is a different implementation served to the
-browser at ``/kopis.py``.
+This is the server-side half of the ``kopis`` package: it runs on CPython
+and serves a web application — a root directory of static files, an HTML
+document at ``/``, and RPC to and from clients. The client-side half
+(the ``kopis.client`` subpackage) runs in the browser under Brython; with
+``Kopis(use="brython")`` the whole package is served to the browser, so
+``import kopis`` resolves to the client side there.
 """
 
 __all__ = ["Document", "Element", "Kopis"]
@@ -38,7 +38,7 @@ except ImportError:  # Interpreter without dataclasses support.
     is_dataclass = None
 
 
-# --- Wire format, shared with the client-side `kopis` module -------------
+# --- Wire format, shared with the client-side `kopis` subpackage ---------
 #
 # RPC messages are JSON. Custom types participate by defining a
 # ``to_json()`` method that returns plain JSON-able data; dataclasses and
@@ -618,11 +618,12 @@ class Kopis:
         """Set up the app to run client-side code with Brython.
 
         Serves the JavaScript files of the installed ``brython`` package
-        at ``/brython.js`` and ``/brython_stdlib.js``, serves the
-        client-side ``kopis`` module (a separate module of the same name
-        that runs in the browser) at ``/kopis.py`` so that
-        ``from kopis import ...`` in client code resolves, and initializes
-        a default document with the Brython scripts in its ``<head>``.
+        at ``/brython.js`` and ``/brython_stdlib.js``, serves the whole
+        ``kopis`` package at the URLs Brython's import system expects
+        (so e.g. ``from kopis import ...`` in client code resolves), and
+        initializes a default document with the Brython scripts in its
+        ``<head>``. The package's ``__init__`` differentiates the sides,
+        so ``import kopis`` in browser code picks the client side.
         """
         import brython  # Optional dependency, required only for use="brython".
 
@@ -635,14 +636,16 @@ class Kopis:
         self.add_static_file("/brython.js", brython_js)
         self.add_static_file("/brython_stdlib.js", brython_stdlib_js)
 
-        # Serve the client-side `kopis` module at the URL Brython's import
-        # system expects, so e.g. ``from kopis import Kopis`` in client.py
-        # resolves. It lives next to this module's source root:
-        # src/{server,client}/kopis.py.
-        client_kopis = Path(__file__).resolve().parent.parent / "client" / "kopis.py"
-        if not client_kopis.is_file():
-            raise FileNotFoundError(client_kopis)
-        self.add_static_file("/kopis.py", client_kopis)
+        # Serve the `kopis` package at the URLs Brython's import system
+        # expects, so e.g. ``from kopis import Kopis`` in client.py
+        # resolves. Every ``.py`` file in the package is served at its
+        # corresponding URL, so any module the client imports exists.
+        # This file lives in ``kopis/server/``, so the package root is
+        # two levels up.
+        kopis_path = Path(__file__).resolve().parent.parent
+        for file in sorted(kopis_path.rglob("*.py")):
+            url = "/kopis/" + file.relative_to(kopis_path).as_posix()
+            self.add_static_file(url, file)
 
         self.document = """
             <html>
