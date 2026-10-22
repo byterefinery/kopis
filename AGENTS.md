@@ -16,5 +16,5 @@ Each example lives in its own directory. Run it from within that directory:
 
 ```sh
 cd examples/ex0
-uv run ex0.py
+uv run server.py
 ```

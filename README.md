@@ -26,5 +26,5 @@ Each example lives in its own directory and is run from within that directory us
 
 ```sh
 cd examples/ex0
-uv run ex0.py
+uv run server.py
 ```

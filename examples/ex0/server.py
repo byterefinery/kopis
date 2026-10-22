@@ -1,6 +1,6 @@
 from kopis import Kopis
 
-from demo0 import f
+from common import f
 
 
 k = Kopis(use="brython")
