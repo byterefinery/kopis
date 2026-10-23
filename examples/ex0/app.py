@@ -44,8 +44,7 @@ def btn0_click(e: object) -> None:
         print("btn0_click result:", v)
         k.document <= f"\n{v!s}"  # noqa: B015 (<= appends to the document)
 
-    v = aio.run(roundtrip())
-    print("btn0_click end", v)
+    aio.run(roundtrip())
 
 
 k.document <= "Hello 4 !"  # noqa: B015 (<= appends to the document)

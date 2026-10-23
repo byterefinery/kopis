@@ -42,9 +42,8 @@ from typing import Any
 from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
-from bs4 import BeautifulSoup
 
-from ..common import KopisBase, WS_PATH, decode, encode
+from ..common import KopisBase, WS_PATH, decode, encode, dom
 from .document import Document, _Noop
 
 __all__ = ["Kopis"]
@@ -105,7 +104,7 @@ class Kopis(KopisBase):
             self.root = entry.parent if entry is not None else Path.cwd()
 
         self._document: str | None = None
-        self._soup: BeautifulSoup | None = None
+        self._tree: dom.Document | None = None
         self._noop = _Noop()
 
         # RPC state.
@@ -154,18 +153,19 @@ class Kopis(KopisBase):
     @document.setter
     def document(self, value: str) -> None:
         self._document = value
-        self._soup = None
+        self._tree = None
 
-    def _parse(self) -> BeautifulSoup:
-        """The document parsed with Beautiful Soup, cached until changed."""
-        if self._soup is None:
+    def _parse(self) -> dom.Document:
+        """The document parsed with the minimal DOM library, cached until
+        changed."""
+        if self._tree is None:
             if self._document is None:
                 index = self.root / "index.html"
                 if not index.is_file():
                     raise FileNotFoundError(index)
                 self._document = index.read_text()
-            self._soup = BeautifulSoup(self._document, "html.parser")
-        return self._soup
+            self._tree = dom.parse_html(self._document)
+        return self._tree
 
     # -- RPC ----------------------------------------------------------------
 
@@ -409,20 +409,22 @@ class Kopis(KopisBase):
     async def _serve_document(self, request: web.Request) -> web.Response:
         """Serve the document, rendered as valid HTML.
 
-        The document text is parsed with Beautiful Soup and re-serialized,
-        so the browser always receives a canonical, valid form of the
-        document. The session cookie also identifies the client that
-        loads the document.
+        The document text is parsed with the minimal DOM library and
+        re-serialized, so the browser always receives a canonical, valid
+        form of the document. The session cookie also identifies the
+        client that loads the document.
         """
         try:
-            html = str(self._parse())
+            text = str(self._parse())
         except FileNotFoundError:
             raise web.HTTPNotFound()
+        except dom.ParseError as exc:
+            raise web.HTTPInternalServerError(text=str(exc))
 
         session = await get_session(request)
         self._ensure_client_id(session)
 
-        return web.Response(text=html, content_type="text/html")
+        return web.Response(text=text, content_type="text/html")
 
     @staticmethod
     def _ensure_client_id(session: Session) -> str:

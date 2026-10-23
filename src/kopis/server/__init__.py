@@ -8,11 +8,17 @@ browser under Brython); only the implementation differs. By default
 (``use="brython"``), the whole package is served to the browser and the
 running script is attached to the document, so ``import kopis`` in browser
 code resolves to the client side there.
+
+:class:`Element` is the element of the minimal DOM library
+(:mod:`kopis.common.dom`): the elements the server-side
+:class:`Document` view hands out are ``kopis.common.dom.Element``
+objects themselves.
 """
 
 from . import aio
 from .app import Kopis
-from .document import Document, Element
-from ..common import Placeholder, RpcError
+from .document import Document
+from ..common import Placeholder, RpcError, dom
+from ..common.dom import Element
 
-__all__ = ["Document", "Element", "Kopis", "Placeholder", "RpcError", "aio"]
+__all__ = ["Document", "Element", "Kopis", "Placeholder", "RpcError", "aio", "dom"]
