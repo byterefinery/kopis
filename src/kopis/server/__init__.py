@@ -17,7 +17,6 @@ import contextvars
 import html
 import inspect
 import itertools
-import json
 import os
 import sys
 import time
@@ -31,7 +30,6 @@ from .._wire import Placeholder, RpcError, decode, encode
 from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
-from aiohttp_sse import EventSourceResponse
 from bs4 import BeautifulSoup, Tag
 from bs4.builder import HTMLTreeBuilder
 
@@ -68,11 +66,6 @@ def _entry_script_dir() -> Path | None:
 #: Tags that never have children or an end tag.
 _empty_tags = HTMLTreeBuilder.DEFAULT_EMPTY_ELEMENT_TAGS
 _VOID_TAGS = frozenset(_empty_tags) if _empty_tags is not None else frozenset()
-
-#: How long an SSE stream waits for the next call before re-checking whether
-#: the client is still connected (bounded by the response's ping interval).
-_SSE_IDLE_TIMEOUT = 15.0
-
 
 def _line_offsets(text: str) -> list[int]:
     """Return the offset of the first character of every line in ``text``."""
@@ -289,23 +282,25 @@ class _Rpc:
 
 
 class _Stream:
-    """An open SSE stream of a client, and the queue of calls to push to it.
+    """An open WebSocket connection of a client, and the queue of messages
+    to send on it.
 
     The queue is a delivery mirror of the durable per-client call queue:
-    a call is pushed here as soon as it is queued, and is replayed from the
+    a call is queued here as soon as it is queued, and is replayed from the
     durable queue whenever the client (re)connects. ``close()`` wakes the
-    delivery loop of a stream that was replaced by a newer connection.
+    sender loop of a stream that was replaced by a newer connection.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, ws: web.WebSocketResponse) -> None:
+        self.ws = ws
         self.queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
-    def push(self, call: dict) -> None:
-        """Queue a call for delivery to the client."""
-        self.queue.put_nowait(call)
+    def push(self, message: dict) -> None:
+        """Queue a message for delivery to the client."""
+        self.queue.put_nowait(message)
 
     def close(self) -> None:
-        """Wake the delivery loop so it can stop (a sentinel is enqueued)."""
+        """Wake the sender loop so it can stop (a sentinel is enqueued)."""
         self.queue.put_nowait(None)
 
 
@@ -334,15 +329,14 @@ class Kopis:
     RPC: decorate a function with ``@k.bind`` to make it callable from
     the other side as ``await k.rpc.<name>(...)``. Inside a bound
     function, ``k.rpc`` targets the client that made the call; calls can
-    also be sent explicitly with ``k.call(client_id, ...)``. Calls to
-    client functions are pushed over a Server-Sent Events stream
-    (``/__kopis__/rpc/events``); the client posts its results back to
-    ``/__kopis__/rpc/results`` as soon as they are ready. Clients are
-    identified by an encrypted session cookie, and all exchanged data
-    is JSON: the values of ``args``, ``kwargs``, and ``result`` are
-    pickled Python objects (base64-encoded in the JSON), and a value
-    that cannot be (de)serialized arrives as a ``Placeholder`` carrying
-    the string of the exception.
+    also be sent explicitly with ``k.call(client_id, ...)``. Calls and
+    results travel both ways over a single WebSocket connection per
+    client (``/__kopis__/rpc``), which the client re-opens on disconnect.
+    Clients are identified by an encrypted session cookie, and all
+    exchanged data is JSON: the values of ``args``, ``kwargs``, and
+    ``result`` are pickled Python objects (base64-encoded in the JSON),
+    and a value that cannot be (de)serialized arrives as a
+    ``Placeholder`` carrying the string of the exception.
     """
 
     def __init__(
@@ -380,9 +374,7 @@ class Kopis:
 
         # Registered before the static route so that it takes precedence on ``/``.
         self.app.router.add_get("/", self._serve_document)
-        self.app.router.add_post("/__kopis__/rpc", self._rpc)
-        self.app.router.add_get("/__kopis__/rpc/events", self._rpc_events)
-        self.app.router.add_post("/__kopis__/rpc/results", self._rpc_results)
+        self.app.router.add_get("/__kopis__/rpc", self._rpc_ws)
 
         self.app.router.add_static("/", self.root, follow_symlinks=True)
 
@@ -482,12 +474,18 @@ class Kopis:
 
         Returns a future that resolves with the client's return value, or
         raises :class:`RpcError` if the call failed there.
-        The call is pushed to the client's open SSE stream at once, or held
-        in the queue until the client (re)connects. Requires a running
-        event loop.
+        The call is sent to the client's open WebSocket at once, or held
+        in the queue and replayed when the client (re)connects. Requires a
+        running event loop.
         """
         call_id = next(self._next_call_id)
-        call = {"id": call_id, "method": method, "args": list(args), "kwargs": kwargs}
+        call = {
+            "type": "call",
+            "id": call_id,
+            "method": method,
+            "args": list(args),
+            "kwargs": kwargs,
+        }
         self._pending_calls.setdefault(client_id, []).append(call)
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending_results[call_id] = future
@@ -519,136 +517,141 @@ class Kopis:
         self._clients[client_id] = time.time()
         return client_id
 
-    def _json(self, payload: dict) -> web.Response:
-        """Serialize ``payload`` to a JSON response (values are pickled)."""
-        return web.Response(text=encode(payload), content_type="application/json")
+    async def _rpc_ws(self, request: web.Request) -> web.WebSocketResponse:
+        """Handle a client's WebSocket connection (GET /__kopis__/rpc).
 
-    async def _rpc(self, request: web.Request) -> web.Response:
-        """Handle a client -> server RPC call (POST /__kopis__/rpc)."""
-        session = await get_session(request)
-        client_id = self._ensure_client_id(session)
-        try:
-            msg = decode(await request.text())
-            method: str = msg["method"]
-            args: list = msg.get("args", [])
-            kwargs: dict = msg.get("kwargs", {})
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            raise web.HTTPBadRequest(text=f"bad RPC request: {exc}")
-
-        func = self._bound.get(method)
-        if func is None:
-            return self._json(
-                {
-                    "error": {
-                        "type": "NameError",
-                        "message": f"no function {method!r} bound on the server",
-                    }
-                }
-            )
-
-        token = self._current_client.set(client_id)
-        try:
-            try:
-                result = func(*args, **kwargs)
-                if inspect.iscoroutine(result):
-                    result = await result
-                payload: dict = {"result": result}
-            except Exception as exc:  # noqa: BLE001 - report any failure to the client
-                payload = {"error": {"type": type(exc).__name__, "message": str(exc)}}
-        finally:
-            self._current_client.reset(token)
-        return self._json(payload)
-
-    async def _rpc_events(self, request: web.Request) -> web.StreamResponse:
-        """Serve a client's SSE stream (GET /__kopis__/rpc/events).
-
-        The stream pushes ``call`` events, one per call queued for functions
-        the client registered with :meth:`bind`. On (re)connection, every
-        call still awaiting its result is replayed, so a dropped connection
-        loses no work; the client skips call ids it already ran. Results
-        come back over :meth:`_rpc_results`.
+        One connection per browser tab, bidirectional: ``call`` and
+        ``result`` messages travel both ways as JSON. On (re)connection,
+        every call still awaiting its result is replayed, so a dropped
+        connection loses no work; the client skips call ids it already
+        ran. Results come back as ``result`` messages.
         """
         session = await get_session(request)
-        if session.get("client_id") is None:
-            # A brand-new session cannot be established here: the stream's
-            # headers go out before the session middleware could set the
-            # cookie. The document request always runs first and does that.
+        client_id = session.get("client_id")
+        if client_id is None:
+            # A brand-new session cannot be established here: the
+            # connection's headers go out before the session middleware
+            # could set the cookie. The document request always runs
+            # first and does that.
             raise web.HTTPBadRequest(text="no session; load the document first")
-        client_id = self._ensure_client_id(session)
-        resp = EventSourceResponse()
-        await resp.prepare(request)
-        stream = _Stream()
+        self._clients[client_id] = time.time()
+
+        ws = web.WebSocketResponse(heartbeat=20)
+        await ws.prepare(request)
+        stream = _Stream(ws)
         old = self._streams.get(client_id)
         self._streams[client_id] = stream
         if old is not None:
             old.close()
+        for call in list(self._pending_calls.get(client_id, [])):
+            stream.push(call)
+        sender = asyncio.ensure_future(self._ws_send(stream))
         try:
-            for call in list(self._pending_calls.get(client_id, [])):
-                await self._send_call(resp, call)
-            while True:
-                try:
-                    call = await asyncio.wait_for(
-                        stream.queue.get(), timeout=_SSE_IDLE_TIMEOUT
-                    )
-                except TimeoutError:
-                    if not resp.is_connected():
-                        break  # client gone
-                    continue
-                if call is None:
-                    break  # replaced by a newer connection
-                await self._send_call(resp, call)
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    self._handle_message(client_id, msg.data)
         except Exception:  # noqa: BLE001, S110 - a dead connection just ends the stream
             # Pending calls stay queued and are replayed when the client
             # (re)connects.
             pass
         finally:
-            if resp.prepared:
-                resp.stop_streaming()
             if self._streams.get(client_id) is stream:
                 del self._streams[client_id]
-        return resp
+            sender.cancel()
+            try:
+                await sender
+            except (Exception, asyncio.CancelledError):  # noqa: BLE001, S110
+                pass
+        return ws
 
     @staticmethod
-    async def _send_call(resp: EventSourceResponse, call: dict) -> None:
-        await resp.send(encode(call), event="call", id=str(call["id"]))
-
-    async def _rpc_results(self, request: web.Request) -> web.Response:
-        """Handle results from a client (POST /__kopis__/rpc/results).
-
-        Each result resolves the future created by :meth:`call` and removes
-        the call from the replay queue. Duplicates (a lost round trip) are
-        ignored, so the client can safely re-send results.
-        """
-        session = await get_session(request)
-        client_id = self._ensure_client_id(session)
+    async def _ws_send(stream: _Stream) -> None:
+        """Send queued messages to the client until the connection ends."""
         try:
-            msg = decode(await request.text())
-            results: list = msg.get("results", [])
-        except (json.JSONDecodeError, TypeError):
-            raise web.HTTPBadRequest(text="bad results request")
-        if not isinstance(results, list):
-            raise web.HTTPBadRequest(text="bad results request")
+            while True:
+                message = await stream.queue.get()
+                if message is None:
+                    return
+                await stream.ws.send_str(encode(message))
+        except Exception:  # noqa: BLE001, S110 - a dead connection just ends the sender
+            # Queued calls remain pending and are replayed on reconnect.
+            pass
 
+    def _handle_message(self, client_id: str, text: str) -> None:
+        """Dispatch a message received from a client."""
+        try:
+            msg = decode(text)
+        except Exception:  # noqa: BLE001 - a bad message simply cannot be routed
+            return
+        if not isinstance(msg, dict):
+            return
+        if msg.get("type") == "call":
+            asyncio.ensure_future(self._run_client_call(client_id, msg))
+        elif msg.get("type") == "result":
+            self._resolve_result(client_id, msg)
+
+    async def _run_client_call(self, client_id: str, msg: dict) -> None:
+        """Run a server function called by a client and send the result."""
+        method = msg.get("method")
+        args = msg.get("args", [])
+        kwargs = msg.get("kwargs", {})
+        payload: dict = {"type": "result", "id": msg.get("id")}
+        func = self._bound.get(method)
+        if func is None:
+            payload["error"] = {
+                "type": "NameError",
+                "message": f"no function {method!r} bound on the server",
+            }
+        elif not isinstance(args, list) or not isinstance(kwargs, dict):
+            payload["error"] = {
+                "type": "TypeError",
+                "message": "bad RPC call: args must be a list, kwargs a dict",
+            }
+        else:
+            token = self._current_client.set(client_id)
+            try:
+                try:
+                    result = func(*args, **kwargs)
+                    if inspect.iscoroutine(result):
+                        result = await result
+                    payload["result"] = result
+                except Exception as exc:  # noqa: BLE001 - report any failure to the client
+                    payload["error"] = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    }
+            finally:
+                self._current_client.reset(token)
+        self._send_to(client_id, payload)
+
+    def _send_to(self, client_id: str, message: dict) -> None:
+        """Queue a message for the client, if it is connected."""
+        stream = self._streams.get(client_id)
+        if stream is not None:
+            stream.push(message)
+
+    def _resolve_result(self, client_id: str, msg: dict) -> None:
+        """Resolve the future of a client call from its result.
+
+        Duplicates (a lost round trip) are ignored, so the client can
+        safely re-send results.
+        """
+        call_id = msg.get("id")
+        future = self._pending_results.pop(call_id, None)
+        if future is None or future.done():
+            return
         calls = self._pending_calls.get(client_id)
-        for res in results:
-            if not isinstance(res, dict):
-                continue
-            call_id = res.get("id")
-            future = self._pending_results.pop(call_id, None)
-            if future is None or future.done():
-                continue
-            if calls is not None:
-                calls = [c for c in calls if c.get("id") != call_id]
-                if calls:
-                    self._pending_calls[client_id] = calls
-                else:
-                    del self._pending_calls[client_id]
-            if "error" in res:
-                err = res["error"]
-                future.set_exception(RpcError(err.get("type", "Error"), err.get("message", "")))
+        if calls is not None:
+            calls = [c for c in calls if c.get("id") != call_id]
+            if calls:
+                self._pending_calls[client_id] = calls
             else:
-                future.set_result(res.get("result"))
-        return self._json({"ok": True})
+                del self._pending_calls[client_id]
+        if "error" in msg:
+            err = msg["error"]
+            future.set_exception(RpcError(err.get("type", "Error"), err.get("message", "")))
+        else:
+            future.set_result(msg.get("result"))
 
     def _setup_brython(self) -> None:
         """Set up the app to run client-side code with Brython.

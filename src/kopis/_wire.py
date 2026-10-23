@@ -1,9 +1,11 @@
 """RPC wire format, shared by the server and client halves of ``kopis``.
 
-RPC messages are JSON, so they stay readable in the browser's network
-inspector: a function name is a string, ``args`` is a list, and
-``kwargs`` is an object with string keys. The *values* of ``args`` and
-``kwargs``, and any call ``result``, are pickled Python objects,
+Calls and results travel both ways over a single WebSocket per client.
+Messages are JSON, so they stay readable in the browser's network
+inspector: a message is either a ``call`` (function name, ``args``,
+``kwargs``) or a ``result``; a function name is a string, ``args`` is a
+list, and ``kwargs`` is an object with string keys. The *values* of
+``args`` and ``kwargs``, and any ``result``, are pickled Python objects,
 base64-encoded so they fit inside the JSON.
 
 A value that cannot be pickled on the sender side, or cannot be
@@ -76,8 +78,9 @@ def _unpack(text: str) -> Any:
 def encode(message: dict) -> str:
     """Serialize an RPC message to a JSON string.
 
-    Function names, call ids, and error details stay plain JSON; the
-    values of ``args`` and ``kwargs``, and any ``result``, are pickled.
+    Message type, call id, function name, and error details stay plain
+    JSON; the values of ``args`` and ``kwargs``, and any ``result``, are
+    pickled.
     """
     packed = dict(message)
     if "args" in packed:
@@ -88,11 +91,6 @@ def encode(message: dict) -> str:
         }
     if "result" in packed:
         packed["result"] = _pack(packed["result"])
-    if "results" in packed:
-        packed["results"] = [
-            {**res, "result": _pack(res["result"])} if "result" in res else res
-            for res in packed["results"]
-        ]
     return json.dumps(packed)
 
 
@@ -108,7 +106,4 @@ def decode(text: str) -> Any:
             }
         if "result" in message:
             message["result"] = _unpack(message["result"])
-        for res in message.get("results", ()):
-            if isinstance(res, dict) and "result" in res:
-                res["result"] = _unpack(res["result"])
     return message
