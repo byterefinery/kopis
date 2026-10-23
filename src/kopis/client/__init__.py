@@ -15,19 +15,23 @@ through ``browser.aio`` and the browser's implicit event loop drives
 everything; ``aio.run`` starts a coroutine without blocking.
 """
 
-__all__ = ["Document", "Element", "Kopis", "RpcError", "aio", "document", "javascript"]
+__all__ = [
+    "Document",
+    "Element",
+    "Kopis",
+    "Placeholder",
+    "RpcError",
+    "aio",
+    "document",
+    "javascript",
+]
 
 import inspect
-import json
 import platform
 from collections.abc import Callable
 from typing import Any, Self
 
-try:
-    from dataclasses import asdict, is_dataclass
-except ImportError:  # Interpreter without dataclasses support.
-    asdict = None
-    is_dataclass = None
+from .._wire import Placeholder, RpcError, decode, encode
 
 if platform.python_implementation() == "Brython":
     # Client: `browser` and `javascript` are Brython built-in modules.
@@ -42,57 +46,6 @@ else:
     document = MagicMock()
     window = MagicMock()
     javascript = MagicMock()
-
-
-# --- Wire format, shared with the server-side `kopis` subpackage -----------
-#
-# RPC messages are JSON. Custom types participate by defining a
-# ``to_json()`` method that returns plain JSON-able data; dataclasses and
-# objects with a ``__dict__`` are converted to a dict of their attributes;
-# anything else falls back to ``str()``. Neither side assumes the other
-# side has the same types — a value always arrives on the receiving end
-# as plain JSON data (dicts, lists, strings, numbers).
-
-
-class RpcError(Exception):
-    """Raised when a remote function call failed on the other side."""
-
-    def __init__(self, type: str, message: str) -> None:
-        super().__init__(f"{type}: {message}")
-        self.type = type
-        self.message = message
-
-
-def _convert(value: object) -> object:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    to_json = getattr(value, "to_json", None)
-    if callable(to_json):
-        return _convert(to_json())
-    if (
-        is_dataclass is not None
-        and asdict is not None
-        and is_dataclass(value)
-        and not isinstance(value, type)
-    ):
-        return _convert(asdict(value))
-    if isinstance(value, dict):
-        return {key: _convert(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_convert(item) for item in value]
-    if hasattr(value, "__dict__"):
-        return _convert(vars(value))
-    return str(value)
-
-
-def encode(value: object) -> str:
-    """Serialize ``value`` to a JSON string, converting custom types to plain data."""
-    return json.dumps(_convert(value))
-
-
-def decode(text: str) -> Any:
-    """Parse a JSON string into plain Python values."""
-    return json.loads(text)
 
 
 RPC_URL = "/__kopis__/rpc"
@@ -234,7 +187,9 @@ class Kopis:
 
     Instantiate it in app code (the same code runs on the server, where
     :meth:`run` starts the web server, and in the browser, where it is a
-    no-op)::
+    no-op). Values passed between the sides are pickled, so objects are
+    restored on the other end as long as their type exists there; anything
+    else arrives as a :class:`Placeholder`::
 
         from kopis import Kopis
         k = Kopis(use="brython")

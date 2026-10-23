@@ -10,7 +10,7 @@ running script is attached to the document, so ``import kopis`` in browser
 code resolves to the client side there.
 """
 
-__all__ = ["Document", "Element", "Kopis", "RpcError", "aio"]
+__all__ = ["Document", "Element", "Kopis", "Placeholder", "RpcError", "aio"]
 
 import asyncio
 import contextvars
@@ -25,71 +25,15 @@ import uuid
 from collections.abc import Callable
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Self
+from typing import Self
 
+from .._wire import Placeholder, RpcError, decode, encode
 from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from aiohttp_sse import EventSourceResponse
 from bs4 import BeautifulSoup, Tag
 from bs4.builder import HTMLTreeBuilder
-
-try:
-    from dataclasses import asdict, is_dataclass
-except ImportError:  # Interpreter without dataclasses support.
-    asdict = None
-    is_dataclass = None
-
-
-# --- Wire format, shared with the client-side `kopis` subpackage ---------
-#
-# RPC messages are JSON. Custom types participate by defining a
-# ``to_json()`` method that returns plain JSON-able data; dataclasses and
-# objects with a ``__dict__`` are converted to a dict of their attributes;
-# anything else falls back to ``str()``. Neither side assumes the other
-# side has the same types — a value always arrives on the receiving end
-# as plain JSON data (dicts, lists, strings, numbers).
-
-
-class RpcError(Exception):
-    """Raised when a remote function call failed on the other side."""
-
-    def __init__(self, type: str, message: str) -> None:
-        super().__init__(f"{type}: {message}")
-        self.type = type
-        self.message = message
-
-
-def _convert(value: object) -> object:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    to_json = getattr(value, "to_json", None)
-    if callable(to_json):
-        return _convert(to_json())
-    if (
-        is_dataclass is not None
-        and asdict is not None
-        and is_dataclass(value)
-        and not isinstance(value, type)
-    ):
-        return _convert(asdict(value))
-    if isinstance(value, dict):
-        return {key: _convert(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_convert(item) for item in value]
-    if hasattr(value, "__dict__"):
-        return _convert(vars(value))
-    return str(value)
-
-
-def encode(value: object) -> str:
-    """Serialize ``value`` to a JSON string, converting custom types to plain data."""
-    return json.dumps(_convert(value))
-
-
-def decode(text: str) -> Any:
-    """Parse a JSON string into plain Python values."""
-    return json.loads(text)
 
 
 def _entry_script() -> Path | None:
@@ -395,8 +339,10 @@ class Kopis:
     (``/__kopis__/rpc/events``); the client posts its results back to
     ``/__kopis__/rpc/results`` as soon as they are ready. Clients are
     identified by an encrypted session cookie, and all exchanged data
-    is plain JSON (custom types are converted via their ``to_json()``
-    method).
+    is JSON: the values of ``args``, ``kwargs``, and ``result`` are
+    pickled Python objects (base64-encoded in the JSON), and a value
+    that cannot be (de)serialized arrives as a ``Placeholder`` carrying
+    the string of the exception.
     """
 
     def __init__(
@@ -517,8 +463,10 @@ class Kopis:
     def bind(self, func) -> Callable:
         """Register a function so that clients can call it via ``k.rpc``.
 
-        The function is called with the JSON-decoded arguments sent by the
-        client; inside it, ``k.rpc`` targets the client that made the call::
+        The function is called with the arguments sent by the client,
+        restored from their pickles (a value that could not be restored
+        arrives as a ``Placeholder``); inside it, ``k.rpc`` targets the
+        client that made the call::
 
             @k.bind
             async def add(x, y):
@@ -571,8 +519,8 @@ class Kopis:
         self._clients[client_id] = time.time()
         return client_id
 
-    def _json(self, payload: object) -> web.Response:
-        """Serialize ``payload`` to a JSON response (custom types allowed)."""
+    def _json(self, payload: dict) -> web.Response:
+        """Serialize ``payload`` to a JSON response (values are pickled)."""
         return web.Response(text=encode(payload), content_type="application/json")
 
     async def _rpc(self, request: web.Request) -> web.Response:

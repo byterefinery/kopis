@@ -17,21 +17,24 @@ the server serves this whole package to the browser, so the same
 differentiation runs there.
 
 Both sides expose the same unified API — ``Kopis`` (with ``bind``,
-``rpc``, ``document``, ``add_static_file``, and ``run``), ``aio``, and
-``RpcError`` — so a single application file can run unmodified on both
-sides; only the implementations differ (e.g. ``k.run()`` starts the web
-server on the server and is a no-op on the client).
+``rpc``, ``document``, ``add_static_file``, and ``run``), ``aio``,
+``RpcError``, and ``Placeholder`` — so a single application file can run
+unmodified on both sides; only the implementations differ (e.g.
+``k.run()`` starts the web server on the server and is a no-op on the
+client). Values exchanged between the sides are pickled by the shared
+``kopis._wire`` module; a value that cannot be (de)serialized arrives as
+a ``Placeholder`` carrying the string of the exception.
 """
 
 import platform
 
 if platform.python_implementation() == "Brython":
     # Client side: running in the browser under Brython.
-    from .client import Kopis, RpcError, aio, document, javascript
+    from .client import Kopis, Placeholder, RpcError, aio, document, javascript
 
-    __all__ = ["Kopis", "RpcError", "aio", "document", "javascript"]
+    __all__ = ["Kopis", "Placeholder", "RpcError", "aio", "document", "javascript"]
 else:
     # Server side: running on CPython.
-    from .server import Document, Element, Kopis, RpcError, aio
+    from .server import Document, Element, Kopis, Placeholder, RpcError, aio
 
-    __all__ = ["Document", "Element", "Kopis", "RpcError", "aio"]
+    __all__ = ["Document", "Element", "Kopis", "Placeholder", "RpcError", "aio"]

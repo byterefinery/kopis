@@ -1,4 +1,4 @@
-from kopis import Kopis, aio
+from kopis import Kopis, Placeholder, aio
 
 from common import f
 
@@ -7,22 +7,26 @@ k = Kopis(use="brython")
 
 
 class Point:
-    """A client-side type, serialized to plain JSON via to_json()."""
+    """A type defined in the app, so it exists on both sides. Values are
+    pickled and arrive on the other side as real ``Point`` objects."""
 
     def __init__(self, x, y):
-        self.x = x
-        self.y = y
+        self.x, self.y = x, y
 
-    def to_json(self):
-        return {"x": self.x, "y": self.y}
+    def __repr__(self):
+        return f"Point({self.x}, {self.y})"
 
 
 @k.bind
 async def server_button_click(name, e, point):
-    # Called by the client; `e` (a DOM event) and `point` (a client-side
-    # type) arrive as plain JSON data; `point` was converted by its
-    # to_json() method. Inside this bound function, k.rpc targets the
-    # client that called us.
+    # Called by the client. `point` arrives as a real Point object (the
+    # same class exists on both sides). `e` is a DOM event, which cannot
+    # be pickled in the browser, so it arrives as a Placeholder carrying
+    # the exception string. Inside this bound function, k.rpc targets
+    # the client that called us.
+    print("server_button_click", e, point)
+    if isinstance(e, Placeholder):
+        print("server_button_click: e could not be deserialized:", e.error)
     v = await k.rpc.client_button_click(name, point)
     print("server_button_click", v)
     return v
@@ -30,7 +34,7 @@ async def server_button_click(name, e, point):
 
 @k.bind
 async def client_button_click(name, point):
-    # Called by the server; `point` is plain data ({"x": ..., "y": ...}).
+    # Called by the server; `point` is a real Point object.
     print("client_button_click", name, point)
     return 29
 
