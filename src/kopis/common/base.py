@@ -62,7 +62,7 @@ class KopisBase(ABC):
     #: Name of this side of the wire, used in error messages.
     side: str
 
-    def __init__(self, use: str | None = None) -> None:
+    def __init__(self, use: str | None = "brython") -> None:
         if use not in (None, "brython"):
             raise ValueError(f"unknown value for use: {use!r}")
         self.use = use

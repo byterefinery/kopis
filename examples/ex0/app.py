@@ -3,7 +3,7 @@ from kopis import Kopis, Placeholder, aio
 from common import f
 
 
-k = Kopis(use="brython")
+k = Kopis()
 
 
 class Point:
@@ -58,7 +58,7 @@ k.document <= "Hello 4 !"  # noqa: B015 (<= appends to the document)
 with k.document.body as el:
     el.append('<button id="btn0">Demo</button>')
 
-k.document.querySelector("#btn0").bind("click", btn0_click)  # ty: ignore[unresolved-attribute]
+k.document.querySelector("#btn0").addEventListener("click", btn0_click)  # ty: ignore[unresolved-attribute]
 
 f(k)
 k.run()

@@ -67,7 +67,7 @@ class Element:
 
     The unified document API works the same way as on the server:
     :meth:`append` adds HTML elements, ``<=`` adds content, and
-    :meth:`bind` attaches an event handler. Any other attribute is
+    :meth:`addEventListener` attaches an event handler. Any other attribute is
     delegated to the underlying DOM element, so all DOM properties and
     methods (``id``, ``innerHTML``, ``value``, ...) work as-is.
     """
@@ -90,9 +90,9 @@ class Element:
             self._element.insertAdjacentHTML("beforeend", fragment)
         return self
 
-    def bind(self, event: str, handler: Callable) -> Any:
-        """Bind an event handler to this element (delegates to the DOM)."""
-        return self._element.bind(event, handler)
+    def addEventListener(self, event: str, handler: Callable) -> Any:
+        """Add an event listener to this element (delegates to the DOM)."""
+        return self._element.addEventListener(event, handler)
 
     def __le__(self, content: object) -> None:
         """Append ``content`` as a child of this element."""
@@ -124,7 +124,7 @@ class Document:
 
         with k.document.body as el:
             el.append("<button id=...></button>")
-        k.document.querySelector("#btn0").bind("click", handler)
+        k.document.querySelector("#btn0").addEventListener("click", handler)
     """
 
     def __init__(self, document: Any) -> None:
@@ -176,7 +176,7 @@ class Kopis(KopisBase):
     else arrives as a :class:`Placeholder`::
 
         from kopis import Kopis
-        k = Kopis(use="brython")
+        k = Kopis()
 
         @k.bind
         async def client_fn(x): ...         # callable from the server
@@ -189,7 +189,7 @@ class Kopis(KopisBase):
 
     side = "client"
 
-    def __init__(self, root: object = None, use: str | None = None) -> None:
+    def __init__(self, root: object = None, use: str | None = "brython") -> None:
         super().__init__(use)
         self._pending: dict[int, Any] = {}  # call id -> future of a client call
         self._done: dict[tuple[str, int], dict] = {}  # (instance, call id) -> result

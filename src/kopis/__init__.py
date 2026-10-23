@@ -12,7 +12,7 @@ running Python implementation:
   with (``document``, ``aio``, ``javascript``). It has no web server.
 
 ``import kopis`` therefore resolves to the server side in CPython code
-and to the client side in browser code. With ``Kopis(use="brython")``
+and to the client side in browser code. By default (``use="brython"``),
 the server serves this whole package to the browser, so the same
 differentiation runs there.
 

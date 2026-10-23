@@ -4,8 +4,8 @@ This is the server-side half of the ``kopis`` package: it runs on CPython
 and serves a web application — a root directory of static files, an HTML
 document at ``/``, and RPC to and from clients. It shares its API with the
 client-side half (the ``kopis.client`` subpackage, which runs in the browser
-under Brython); only the implementation differs. With
-``Kopis(use="brython")`` the whole package is served to the browser and the
+under Brython); only the implementation differs. By default
+(``use="brython"``), the whole package is served to the browser and the
 running script is attached to the document, so ``import kopis`` in browser
 code resolves to the client side there.
 """
@@ -208,8 +208,8 @@ class Element:
             self._document._owner._insert_into(self.tag, fragment)
         return self
 
-    def bind(self, event: str, handler: Callable) -> Element:
-        """Bind an event handler to this element.
+    def addEventListener(self, event: str, handler: Callable) -> Element:
+        """Add an event listener to this element.
 
         The server has no live DOM, so this is a no-op; the handler takes
         effect when the same code runs in the browser.
@@ -239,7 +239,7 @@ class _Noop:
     def append(self, *html: str) -> Self:
         return self
 
-    def bind(self, event: str, handler: Callable) -> Self:
+    def addEventListener(self, event: str, handler: Callable) -> Self:
         return self
 
     def querySelector(self, selector: str) -> Self:
@@ -302,7 +302,7 @@ class Kopis(KopisBase):
     :meth:`add_static_file` serves files from anywhere on disk at a
     chosen URL.
 
-    ``use="brython"`` configures the app to run client-side Python code
+    By default (``use="brython"``), the app runs client-side Python code
     with `Brython <https://brython.info>`_: the Brython scripts and the
     modules of the ``kopis`` package are served, and a default document
     loading the Brython scripts is created. The running script (the app)
@@ -329,7 +329,7 @@ class Kopis(KopisBase):
     def __init__(
         self,
         root: str | Path | None = None,
-        use: str | None = None,
+        use: str | None = "brython",
     ) -> None:
         super().__init__(use)
 
