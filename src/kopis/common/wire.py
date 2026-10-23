@@ -21,7 +21,10 @@ import json
 import pickle
 from typing import Any
 
-__all__ = ["Placeholder", "RpcError", "decode", "encode"]
+__all__ = ["WS_PATH", "Placeholder", "RpcError", "decode", "encode"]
+
+#: The URL of the WebSocket endpoint that carries RPC messages.
+WS_PATH = "/__kopis__/rpc"
 
 
 class Placeholder:

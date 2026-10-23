@@ -26,13 +26,12 @@ __all__ = [
     "javascript",
 ]
 
-import inspect
 import itertools
 import platform
 from collections.abc import Callable
 from typing import Any, Self
 
-from .._wire import Placeholder, RpcError, decode, encode
+from ..common import KopisBase, Placeholder, RpcError, WS_PATH, decode, encode
 
 if platform.python_implementation() == "Brython":
     # Client: `browser` and `javascript` are Brython built-in modules.
@@ -51,7 +50,6 @@ else:
     javascript = MagicMock()
 
 
-WS_URL = "/__kopis__/rpc"
 _RETRY_DELAY = 1.0  # pause before reopening a dropped connection
 _DONE_CAP = 1000  # completed calls remembered, to deduplicate replayed calls
 
@@ -61,7 +59,7 @@ def _ws_url() -> str:
     url = str(window.location.href)
     if url.startswith("http"):
         url = url.replace("http", "ws", 1)
-    return url.rstrip("/") + WS_URL
+    return url.rstrip("/") + WS_PATH
 
 
 class Element:
@@ -168,36 +166,7 @@ class Document:
         return None
 
 
-class _Rpc:
-    """Proxy for ``k.rpc``: ``k.rpc.name(args)`` calls the server's function."""
-
-    def __init__(self, owner: Kopis) -> None:
-        self._owner = owner
-
-    def __getattr__(self, name: str):
-        if name.startswith("_"):
-            raise AttributeError(name)
-
-        async def call(*args: object, **kwargs: object) -> object:
-            owner = self._owner
-            call_id = next(owner._next_id)
-            fut = aio.Future()
-            owner._pending[call_id] = fut
-            owner._send(
-                {
-                    "type": "call",
-                    "id": call_id,
-                    "method": name,
-                    "args": list(args),
-                    "kwargs": kwargs,
-                }
-            )
-            return await fut
-
-        return call
-
-
-class Kopis:
+class Kopis(KopisBase):
     """A kopis application, client side.
 
     Instantiate it in app code (the same code runs on the server, where
@@ -218,29 +187,23 @@ class Kopis:
     per tab; it is re-opened automatically when the connection drops.
     """
 
+    side = "client"
+
     def __init__(self, root: object = None, use: str | None = None) -> None:
-        if use not in (None, "brython"):
-            raise ValueError(f"unknown value for use: {use!r}")
-        self._bound: dict[str, Callable[..., Any]] = {}
+        super().__init__(use)
         self._pending: dict[int, Any] = {}  # call id -> future of a client call
-        self._done: dict[int, dict] = {}  # completed call id -> result payload
+        self._done: dict[tuple[str, int], dict] = {}  # (instance, call id) -> result
         self._outbox: list[dict] = []  # messages waiting for the connection
         self._next_id = itertools.count(1)
         self._ws: Any = None
         self._open = False
         self._closed_by_user = False
-        self.rpc = _Rpc(self)
         self._connect()
 
     @property
     def document(self) -> Document:
         """A live view of the browser document."""
         return Document(document)
-
-    def bind(self, func) -> Callable[..., Any]:
-        """Register a function so the other side can call it by name."""
-        self._bound[func.__name__] = func
-        return func
 
     def add_static_file(self, path: str, file_path: object) -> None:
         """No-op on the client: files are served by the server."""
@@ -254,20 +217,65 @@ class Kopis:
         if self._ws is not None:
             self._ws.close()
 
+    async def _rpc_call(self, name: str, args: tuple, kwargs: dict) -> object:
+        """Call a function bound on the server and await its result."""
+        call_id = next(self._next_id)
+        fut = aio.Future()
+        self._pending[call_id] = fut
+        self._send(
+            {
+                "type": "call",
+                "id": call_id,
+                "method": name,
+                "args": list(args),
+                "kwargs": kwargs,
+            }
+        )
+        return await fut
+
     def _connect(self) -> None:
         """Open (re-open) the WebSocket connection to the server."""
-        self._ws = websocket.WebSocket(_ws_url())
+        ws = websocket.WebSocket(_ws_url())
+        self._ws = ws
         self._open = False
-        self._ws.onopen = self._on_open
-        self._ws.onmessage = self._on_message
-        self._ws.onclose = self._on_close
 
-    def _on_open(self, *event: object) -> None:
-        self._open = True
-        # Send anything that was queued while the connection was down.
-        for message in self._outbox:
-            self._ws.send(encode(message))
-        self._outbox.clear()
+        # Event handlers check that their socket is still the current one:
+        # a stale close event from an abandoned socket can arrive after a
+        # newer socket has opened, and must not clobber its state.
+
+        def on_open(*event: object) -> None:
+            if self._ws is not ws:
+                return
+            self._open = True
+            # Send anything that was queued while the connection was down.
+            for message in self._outbox:
+                ws.send(encode(message))
+            self._outbox.clear()
+
+        def on_message(event: Any) -> None:
+            if self._ws is not ws:
+                return
+            self._handle_message(event)
+
+        def on_close(*event: object) -> None:
+            if self._ws is not ws:
+                return
+            self._open = False
+            self._ws = None
+            # Client calls still in flight can no longer receive their result.
+            for fut in self._pending.values():
+                fut.set_exception(
+                    RpcError("ConnectionError", "connection to the server was lost")
+                )
+            self._pending.clear()
+            if self._closed_by_user:
+                return
+            print("kopis: connection closed, reconnecting")
+            aio.run(self._reconnect())
+
+        ws.onopen = on_open
+        ws.onmessage = on_message
+        ws.onclose = on_close
 
     def _send(self, message: dict) -> None:
         """Send a message, or queue it until the connection is open again."""
@@ -279,7 +287,7 @@ class Kopis:
                 print("kopis: send failed:", exc)
         self._outbox.append(message)
 
-    def _on_message(self, event: Any) -> None:
+    def _handle_message(self, event: Any) -> None:
         """Handle a message received from the server."""
         try:
             msg = decode(str(event.data))
@@ -292,42 +300,23 @@ class Kopis:
         elif msg.get("type") == "result":
             fut = self._pending.pop(msg.get("id"), None)
             if fut is not None:
-                if "error" in msg:
-                    err = msg["error"]
-                    fut.set_exception(
-                        RpcError(err.get("type", "Error"), err.get("message", ""))
-                    )
-                else:
-                    fut.set_result(msg.get("result"))
+                self._settle_result(fut, msg)
 
     async def _run_call(self, call: dict) -> None:
         """Run a client function called by the server and send the result."""
         call_id = call["id"]
-        done = self._done.get(call_id)
+        # Call ids restart after a server restart, so they are remembered
+        # together with the server instance that issued them.
+        key = (call.get("instance", ""), call_id)
+        done = self._done.get(key)
         if done is None:
-            bound = self._bound.get(call.get("method"))
-            if bound is None:
-                payload: dict = {
-                    "type": "result",
-                    "id": call_id,
-                    "error": {
-                        "type": "NameError",
-                        "message": f"no function {call.get('method')!r} bound on the client",
-                    },
-                }
-            else:
-                try:
-                    result = bound(*call.get("args", []), **call.get("kwargs", {}))
-                    if inspect.iscoroutine(result):
-                        result = await result
-                    payload = {"type": "result", "id": call_id, "result": result}
-                except Exception as exc:  # noqa: BLE001 - report any failure to the server
-                    payload = {
-                        "type": "result",
-                        "id": call_id,
-                        "error": {"type": type(exc).__name__, "message": str(exc)},
-                    }
-            self._done[call_id] = payload
+            payload: dict = {"type": "result", "id": call_id}
+            payload.update(
+                await self._dispatch(
+                    call.get("method"), call.get("args", []), call.get("kwargs", {})
+                )
+            )
+            self._done[key] = payload
             while len(self._done) > _DONE_CAP:
                 del self._done[next(iter(self._done))]
         else:
@@ -336,20 +325,6 @@ class Kopis:
             # Re-send the stored result instead of running it again.
             payload = done
         self._send(payload)
-
-    def _on_close(self, *event: object) -> None:
-        self._open = False
-        self._ws = None
-        # Client calls still in flight can no longer receive their result.
-        for fut in self._pending.values():
-            fut.set_exception(
-                RpcError("ConnectionError", "connection to the server was lost")
-            )
-        self._pending.clear()
-        if self._closed_by_user:
-            return
-        print("kopis: connection closed, reconnecting")
-        aio.run(self._reconnect())
 
     async def _reconnect(self) -> None:
         await aio.sleep(_RETRY_DELAY)

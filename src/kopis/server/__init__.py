@@ -14,10 +14,10 @@ __all__ = ["Document", "Element", "Kopis", "Placeholder", "RpcError", "aio"]
 
 import asyncio
 import contextvars
+import hashlib
 import html
 import inspect
 import itertools
-import os
 import sys
 import time
 import uuid
@@ -26,7 +26,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Self
 
-from .._wire import Placeholder, RpcError, decode, encode
+from ..common import KopisBase, Placeholder, RpcError, WS_PATH, decode, encode
 from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
@@ -66,6 +66,7 @@ def _entry_script_dir() -> Path | None:
 #: Tags that never have children or an end tag.
 _empty_tags = HTMLTreeBuilder.DEFAULT_EMPTY_ELEMENT_TAGS
 _VOID_TAGS = frozenset(_empty_tags) if _empty_tags is not None else frozenset()
+
 
 def _line_offsets(text: str) -> list[int]:
     """Return the offset of the first character of every line in ``text``."""
@@ -265,22 +266,6 @@ class _Noop:
         return self
 
 
-class _Rpc:
-    """Proxy for ``k.rpc``: ``k.rpc.name(args)`` calls a client function."""
-
-    def __init__(self, owner: Kopis) -> None:
-        self._owner = owner
-
-    def __getattr__(self, name: str):
-        if name.startswith("_"):
-            raise AttributeError(name)
-
-        async def call(*args: object, **kwargs: object) -> object:
-            return await self._owner._call_client(name, args, kwargs)
-
-        return call
-
-
 class _Stream:
     """An open WebSocket connection of a client, and the queue of messages
     to send on it.
@@ -304,7 +289,7 @@ class _Stream:
         self.queue.put_nowait(None)
 
 
-class Kopis:
+class Kopis(KopisBase):
     """A web application served from a root directory.
 
     The root directory defaults to the directory of the running script.
@@ -339,11 +324,15 @@ class Kopis:
     ``Placeholder`` carrying the string of the exception.
     """
 
+    side = "server"
+
     def __init__(
         self,
         root: str | Path | None = None,
         use: str | None = None,
     ) -> None:
+        super().__init__(use)
+
         if root is not None:
             self.root = Path(root).resolve()
         else:
@@ -354,34 +343,33 @@ class Kopis:
         self._noop = _Noop()
 
         # RPC state.
-        self._bound: dict[str, Callable] = {}
+        self._instance = uuid.uuid4().hex  # distinguishes call ids across restarts
         self._clients: dict[str, float] = {}
         self._pending_calls: dict[str, list[dict]] = {}
         self._pending_results: dict[int, asyncio.Future] = {}
         self._streams: dict[str, _Stream] = {}
         self._next_call_id = itertools.count(1)
-        self._current_client: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-            "kopis_current_client", default=None
+        self._current_client: contextvars.ContextVar[str | None] = (
+            contextvars.ContextVar("kopis_current_client", default=None)
         )
-        self.rpc = _Rpc(self)
 
         self.app = web.Application()
         # Sessions (cookie-based) identify which client a request comes from.
+        # The key is derived from the root directory, so it survives server
+        # restarts: a client that reconnects after a restart is still
+        # recognized, and calls queued for it are replayed.
+        session_key = hashlib.sha256(str(self.root).encode()).digest()
         setup(
-            self.app,
-            EncryptedCookieStorage(os.urandom(32), cookie_name="kopis_session"),
+            self.app, EncryptedCookieStorage(session_key, cookie_name="kopis_session")
         )
 
         # Registered before the static route so that it takes precedence on ``/``.
         self.app.router.add_get("/", self._serve_document)
-        self.app.router.add_get("/__kopis__/rpc", self._rpc_ws)
+        self.app.router.add_get(WS_PATH, self._rpc_ws)
 
         self.app.router.add_static("/", self.root, follow_symlinks=True)
 
-        if use not in (None, "brython"):
-            raise ValueError(f"unknown value for use: {use!r}")
-
-        self._brython = use == "brython"
+        self._brython = self.use == "brython"
 
         if self._brython:
             self._setup_brython()
@@ -452,21 +440,6 @@ class Kopis:
         self._document = text[:offset] + body + text[offset:]
         self._soup = None
 
-    def bind(self, func) -> Callable:
-        """Register a function so that clients can call it via ``k.rpc``.
-
-        The function is called with the arguments sent by the client,
-        restored from their pickles (a value that could not be restored
-        arrives as a ``Placeholder``); inside it, ``k.rpc`` targets the
-        client that made the call::
-
-            @k.bind
-            async def add(x, y):
-                return x + y
-        """
-        self._bound[func.__name__] = func
-        return func
-
     def call(
         self, client_id: str, method: str, *args: object, **kwargs: object
     ) -> asyncio.Future:
@@ -482,6 +455,7 @@ class Kopis:
         call = {
             "type": "call",
             "id": call_id,
+            "instance": self._instance,
             "method": method,
             "args": list(args),
             "kwargs": kwargs,
@@ -494,7 +468,7 @@ class Kopis:
             stream.push(call)
         return future
 
-    async def _call_client(self, method: str, args: tuple, kwargs: dict) -> object:
+    async def _rpc_call(self, name: str, args: tuple, kwargs: dict) -> object:
         """Call a client function on the client that is currently being served."""
         client_id = self._current_client.get()
         if client_id is None:
@@ -502,7 +476,7 @@ class Kopis:
                 "k.rpc can only be used inside a function called by a client; "
                 "use k.call(client_id, ...) to target a client explicitly"
             )
-        return await self.call(client_id, method, *args, **kwargs)
+        return await self.call(client_id, name, *args, **kwargs)
 
     @property
     def clients(self) -> dict[str, float]:
@@ -529,11 +503,11 @@ class Kopis:
         session = await get_session(request)
         client_id = session.get("client_id")
         if client_id is None:
-            # A brand-new session cannot be established here: the
-            # connection's headers go out before the session middleware
-            # could set the cookie. The document request always runs
-            # first and does that.
-            raise web.HTTPBadRequest(text="no session; load the document first")
+            # Give the client a new identity. A successful upgrade (101)
+            # cannot carry the session cookie, but this 400 can, so the
+            # client's reconnect attempt right after it connects cleanly.
+            self._ensure_client_id(session)
+            raise web.HTTPBadRequest(text="no session yet; try again")
         self._clients[client_id] = time.time()
 
         ws = web.WebSocketResponse(heartbeat=20)
@@ -560,7 +534,7 @@ class Kopis:
             sender.cancel()
             try:
                 await sender
-            except (Exception, asyncio.CancelledError):  # noqa: BLE001, S110
+            except Exception, asyncio.CancelledError:  # noqa: BLE001, S110
                 pass
         return ws
 
@@ -592,36 +566,16 @@ class Kopis:
 
     async def _run_client_call(self, client_id: str, msg: dict) -> None:
         """Run a server function called by a client and send the result."""
-        method = msg.get("method")
-        args = msg.get("args", [])
-        kwargs = msg.get("kwargs", {})
         payload: dict = {"type": "result", "id": msg.get("id")}
-        func = self._bound.get(method)
-        if func is None:
-            payload["error"] = {
-                "type": "NameError",
-                "message": f"no function {method!r} bound on the server",
-            }
-        elif not isinstance(args, list) or not isinstance(kwargs, dict):
-            payload["error"] = {
-                "type": "TypeError",
-                "message": "bad RPC call: args must be a list, kwargs a dict",
-            }
-        else:
-            token = self._current_client.set(client_id)
-            try:
-                try:
-                    result = func(*args, **kwargs)
-                    if inspect.iscoroutine(result):
-                        result = await result
-                    payload["result"] = result
-                except Exception as exc:  # noqa: BLE001 - report any failure to the client
-                    payload["error"] = {
-                        "type": type(exc).__name__,
-                        "message": str(exc),
-                    }
-            finally:
-                self._current_client.reset(token)
+        token = self._current_client.set(client_id)
+        try:
+            payload.update(
+                await self._dispatch(
+                    msg.get("method"), msg.get("args", []), msg.get("kwargs", {})
+                )
+            )
+        finally:
+            self._current_client.reset(token)
         self._send_to(client_id, payload)
 
     def _send_to(self, client_id: str, message: dict) -> None:
@@ -647,11 +601,7 @@ class Kopis:
                 self._pending_calls[client_id] = calls
             else:
                 del self._pending_calls[client_id]
-        if "error" in msg:
-            err = msg["error"]
-            future.set_exception(RpcError(err.get("type", "Error"), err.get("message", "")))
-        else:
-            future.set_result(msg.get("result"))
+        self._settle_result(future, msg)
 
     def _setup_brython(self) -> None:
         """Set up the app to run client-side code with Brython.

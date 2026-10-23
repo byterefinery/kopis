@@ -22,8 +22,8 @@ Both sides expose the same unified API — ``Kopis`` (with ``bind``,
 unmodified on both sides; only the implementations differ (e.g.
 ``k.run()`` starts the web server on the server and is a no-op on the
 client). Values exchanged between the sides are pickled by the shared
-``kopis._wire`` module; a value that cannot be (de)serialized arrives as
-a ``Placeholder`` carrying the string of the exception.
+``kopis.common`` package; a value that cannot be (de)serialized arrives
+as a ``Placeholder`` carrying the string of the exception.
 """
 
 import platform
