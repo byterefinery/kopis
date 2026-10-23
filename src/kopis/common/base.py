@@ -39,7 +39,7 @@ class _Rpc:
     def __init__(self, owner: KopisBase) -> None:
         self._owner = owner
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Callable[..., Any]:
         if name.startswith("_"):
             raise AttributeError(name)
 
@@ -76,7 +76,7 @@ class KopisBase(ABC):
     def document(self) -> Any:
         """A live view of the document."""
 
-    def bind(self, func) -> Callable[..., Any]:
+    def bind(self, func: Callable[..., Any]) -> Callable[..., Any]:
         """Register a function so that the other side can call it via
         ``k.rpc``::
 
@@ -84,7 +84,7 @@ class KopisBase(ABC):
             async def add(x, y):
                 return x + y
         """
-        self._bound[func.__name__] = func
+        self._bound[func.__name__] = func  # ty: ignore[unresolved-attribute] - a named function is required
         return func
 
     @abstractmethod
@@ -98,11 +98,15 @@ class KopisBase(ABC):
     # -- RPC ----------------------------------------------------------------
 
     @abstractmethod
-    async def _rpc_call(self, name: str, args: tuple, kwargs: dict) -> object:
+    async def _rpc_call(
+        self, name: str, args: tuple[object, ...], kwargs: dict[str, object]
+    ) -> object:
         """Send a call to a function bound on the other side and await
         its result."""
 
-    async def _dispatch(self, method: str | None, args: list, kwargs: dict) -> dict:
+    async def _dispatch(
+        self, method: str | None, args: list[object], kwargs: dict[str, object]
+    ) -> dict[str, Any]:
         """Run a function called by the other side and build the
         ``result`` or ``error`` part of its payload.
 
@@ -111,7 +115,7 @@ class KopisBase(ABC):
         and ``kwargs`` are the arguments sent by the other side,
         restored from their pickles.
         """
-        func = self._bound.get(method)
+        func = self._bound.get(method) if isinstance(method, str) else None
         if func is None:
             return {
                 "error": {
@@ -134,7 +138,7 @@ class KopisBase(ABC):
         except Exception as exc:  # noqa: BLE001 - report any failure to the other side
             return {"error": {"type": type(exc).__name__, "message": str(exc)}}
 
-    def _settle_result(self, future: Any, msg: dict) -> None:
+    def _settle_result(self, future: Any, msg: dict[str, Any]) -> None:
         """Resolve the future of a pending call from its ``result``
         message.
 

@@ -1,8 +1,5 @@
 from kopis import Kopis, Placeholder, aio
 
-from common import f
-
-
 k = Kopis()
 
 
@@ -10,15 +7,15 @@ class Point:
     """A type defined in the app, so it exists on both sides. Values are
     pickled and arrive on the other side as real ``Point`` objects."""
 
-    def __init__(self, x, y):
+    def __init__(self, x: int, y: int) -> None:
         self.x, self.y = x, y
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Point({self.x}, {self.y})"
 
 
 @k.bind
-async def server_button_click(name, e, point):
+async def server_button_click(name: str, e: object, point: Point) -> object:
     # Called by the client. `point` arrives as a real Point object (the
     # same class exists on both sides). `e` is a DOM event, which cannot
     # be pickled in the browser, so it arrives as a Placeholder carrying
@@ -33,21 +30,19 @@ async def server_button_click(name, e, point):
 
 
 @k.bind
-async def client_button_click(name, point):
+async def client_button_click(name: str, point: Point) -> int:
     # Called by the server; `point` is a real Point object.
     print("client_button_click", name, point)
     return 29
 
 
-def btn0_click(e):
+def btn0_click(e: object) -> None:
     print("btn0_click", e)
-    f("btn0_click", e, e=e)
 
-    async def roundtrip():
+    async def roundtrip() -> None:
         v = await k.rpc.server_button_click("btn0_click", e, Point(3, 4))
         print("btn0_click result:", v)
         k.document <= f"\n{v!s}"  # noqa: B015 (<= appends to the document)
-        return v
 
     v = aio.run(roundtrip())
     print("btn0_click end", v)
@@ -60,5 +55,6 @@ with k.document.body as el:
 
 k.document.querySelector("#btn0").addEventListener("click", btn0_click)  # ty: ignore[unresolved-attribute]
 
-f(k)
+print("k", k)
+
 k.run()

@@ -159,11 +159,11 @@ wheels = [
 
 [[package]]
 name = "brython"
-version = "3.15.0"
+version = "3.14.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/82/52/d9d5bb769edeb140723f0d1bd95abfe5421fca05635e02b28ff51356cda6/brython-3.15.0.tar.gz", hash = "sha256:d70d06c6014c9503af7c4582ed78f5c772fd6286ba0c3642118453570fda1c00", size = 1732208, upload-time = "2026-10-10T16:23:10.716Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/92/80/1aabcc72ba6106265868b6845ead1c67fc2f28ccb2e8d0f974ddaf8660bf/brython-3.14.3.tar.gz", hash = "sha256:e7c42a732903a9b733979080cebd99ab8d7277cb5874e8b97f0dbf571da991c0", size = 1615069, upload-time = "2026-06-20T15:55:52.129Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/e7/1f10d950a07cc5b015f7c74fc6078513cf50f9840de7dff50aab57348324/brython-3.15.0-py2.py3-none-any.whl", hash = "sha256:b967735b80a4215e47d4cbbc7f86ffff1753e694d9adfb2140e7db91c979e510", size = 1731062, upload-time = "2026-10-10T16:23:08.489Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/96/e6f77f14f4e5062782b1b44789baad68d077b3a53277f428438c141ffcbf/brython-3.14.3-py2.py3-none-any.whl", hash = "sha256:e38e2d85a48bd3bf1e19beb05d76d5645ff3c73cf278b808e95005a0492cd42c", size = 1642826, upload-time = "2026-06-20T15:55:49.49Z" },
 ]
 
 [[package]]
@@ -366,7 +366,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "brython", specifier = ">=3.15.0" },
+    { name = "brython", specifier = ">=3.14.0,<3.15" },
     { name = "ruff", specifier = ">=0.17.1" },
     { name = "ty", specifier = ">=0.0.89" },
 ]

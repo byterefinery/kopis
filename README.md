@@ -13,10 +13,11 @@ Kopis runs Python on both ends of the web stack:
 
 ## Code layout
 
-The `kopis` package is imported on both sides of the web stack, and its `__init__.py` (`src/kopis/__init__.py`) differentiates the implementations at import time based on the running Python implementation:
+The `kopis` package is imported on both sides of the web stack, and its `__init__.py` (`src/kopis/__init__.py`) differentiates the implementations at import time based on the running Python implementation. Each subpackage's `__init__.py` is a thin re-export of its modules:
 
-- `src/kopis/server/` — the **server-side** subpackage. Runs on CPython, provides the web application (root directory, HTML document, RPC) and starts the web server on `k.run()`.
-- `src/kopis/client/` — the **client-side** subpackage. Runs in the browser under Brython; it has no web server (`k.run()` is a no-op), only the RPC client and the browser objects client code works with (`document`, `aio`, `javascript`).
+- `src/kopis/common/` — code shared by both sides: the ``Kopis`` base class (`base.py`, the ``bind``/``rpc`` registry, dispatch, and result settling) and the RPC wire format (`wire.py`, JSON messages with pickled values and the `Placeholder`/`RpcError` types).
+- `src/kopis/server/` — the **server-side** subpackage. Runs on CPython: the web application (`app.py` — root directory, HTML document at `/`, RPC server over WebSocket), the document view (`document.py`, backed by Beautiful Soup), and the `aio` facade (`aio.py`). `k.run()` starts the web server.
+- `src/kopis/client/` — the **client-side** subpackage. Runs in the browser under Brython; it has no web server (`k.run()` is a no-op): the RPC client (`app.py`), the live document view (`document.py`, backed by the DOM), and access to the `browser`/`javascript` modules with CPython fallbacks (`brython.py`).
 
 Both sides expose the **same unified API** — `Kopis` (with `bind`, `rpc`, `document`, `add_static_file`, and `run`), `aio`, `RpcError`, and `Placeholder` — so a single application file runs unmodified on both sides; only the implementations differ. Values passed between the sides are pickled (see `src/kopis/common/wire.py`), so objects are restored on the other end as long as their type exists there; anything that cannot be (de)serialized arrives as a `Placeholder` carrying the string of the exception.
 

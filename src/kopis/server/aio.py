@@ -11,7 +11,7 @@ import asyncio
 from collections.abc import Coroutine
 
 
-def run(coro: Coroutine) -> asyncio.Task:
+def run(coro: Coroutine) -> asyncio.Future:
     """Start a coroutine without blocking, returning the task that wraps it."""
     return asyncio.ensure_future(coro)
 
