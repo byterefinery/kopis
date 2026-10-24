@@ -17,7 +17,7 @@ from typing import Any
 from browser import DOMNode, aio, document, window, websocket
 
 from ..common import KopisBase, RpcError, WS_PATH, decode, encode
-from .parse_html import parse_html as _parse_html
+from .parser import parse_html
 
 __all__ = ["Kopis"]
 
@@ -97,13 +97,13 @@ class Kopis(KopisBase):
         the list of the fragment's top-level elements, in order (possibly
         empty).
 
-        Standard HTML markup only — see ``kopis.client.parse_html`` for the
+        Standard HTML markup only — see ``kopis.client.parser`` for the
         parser. (Appending a string directly — ``element <= html_str``,
         ``element.attach(html_str)``, or ``element.append(html_str)`` —
         parses the fragment first and appends its top-level nodes; see
         ``kopis.client.dom``.)
         """
-        return _parse_html(html_str)
+        return parse_html(html_str)
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
         """No-op on the client: the web server runs on the server side."""
