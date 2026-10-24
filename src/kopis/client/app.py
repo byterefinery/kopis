@@ -13,8 +13,9 @@ import itertools
 from pathlib import Path
 from typing import Any
 
+from browser import DOMNode, aio, document, window, websocket
+
 from ..common import KopisBase, RpcError, WS_PATH, decode, encode
-from .brython import aio, browser_document, window, websocket
 
 __all__ = ["Kopis"]
 
@@ -69,10 +70,10 @@ class Kopis(KopisBase):
         self._connect()
 
     @property
-    def document(self) -> Any:
+    def document(self) -> DOMNode:
         """The browser document (the live DOM; the brython
         ``browser.document`` object)."""
-        return browser_document
+        return document
 
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """No-op on the client: files are served by the server."""

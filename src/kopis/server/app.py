@@ -1,29 +1,29 @@
 """The server-side ``Kopis`` application.
 
 A web application served from a root directory: files in the root
-directory are served as static assets, and the ``document`` is served at
-``/``. The document is either an in-memory string assigned to
-``k.document``, or the ``index.html`` file in the root directory.
-``k.document`` also gives a :class:`~kopis.common.dom.Document` view of
-the parsed document that supports adding HTML elements to existing
-elements, and :meth:`Kopis.add_static_file` serves files from anywhere
-on disk at a chosen URL.
+directory are served as static assets, and the ``document`` is served
+at ``/``. The document is either an in-memory string assigned to
+``k.document``, or the ``index.html`` file in the root directory (the
+assigned string takes precedence); :meth:`Kopis.add_static_file` serves
+files from anywhere on disk at a chosen URL.
 
-By default (``use="brython"``), the app runs client-side Python code with
-`Brython <https://brython.info>`_: the Brython scripts and the modules of
-the ``kopis`` package are served, a default document loading the Brython
-scripts is created, and the running script (the app) is attached to the
-document as a Brython script, so the same application code runs in the
-browser under Brython. The unified code then works on ``k.document`` the
-same way on both sides: on the server it is the parsed tree of the
-document (a live view of it), which the frozen document served at ``/``
-was built from — the browser builds the live DOM by running the same
-code under Brython, so the server must not serve the content the app
-adds. Event handlers are recorded on the server tree (the brython event
-interface) but never fired: there is no live DOM on the server. The tree
-is also exposed as ``browser.document`` of the stand-in ``browser``
-package, so unified code can use the brython high-level API on both
-sides.
+The server never parses the document: in the brython way, the browser
+parses the HTML it loads, and the client side has no HTML parsing of
+its own. ``k.document`` on the server is therefore a stand-in of the
+brython ``browser.document`` object (a
+:class:`~kopis.server.browser.DOMNode` of the raw HTML string served at
+``/``): unified code works on it identically to the live DOM in the
+browser — ``document <= ...``, ``document.createElement``,
+``bind``, and friends all succeed — but nothing is rendered or fired:
+the browser does all that by running the same code under Brython.
+
+By default (``use="brython"``), the app runs client-side Python code
+with `Brython <https://brython.info>`_: the Brython scripts and the
+modules of the ``kopis`` package are served, a default document is
+created when the root has no ``index.html`` and ``k.document`` is never
+assigned, and the running script (the app) is attached to the document
+as a Brython script, so the same application code runs in the browser
+under Brython.
 
 RPC: register a function with ``@k.rpc.register`` (the short way is
 ``@k.register``) to make it callable from the other side as
@@ -32,9 +32,9 @@ Inside a registered function, ``k.rpc`` targets the client that made
 the call; calls can also be sent explicitly with ``k.call(client_id,
 ...)``. Calls and results travel both
 ways over a single WebSocket connection per client
-(``/__kopis__/rpc``), which the client re-opens on disconnect. Clients are
-identified by an encrypted session cookie, and all exchanged data is
-JSON: the values of ``args``, ``kwargs``, and ``result`` are pickled
+(``/__kopis__/rpc``), which the client re-opens on disconnect. Clients
+are identified by an encrypted session cookie, and all exchanged data
+is JSON: the values of ``args``, ``kwargs``, and ``result`` are pickled
 Python objects (base64-encoded in the JSON), and a value that cannot be
 (de)serialized arrives as a ``Placeholder`` carrying the string of the
 exception.
@@ -53,7 +53,8 @@ from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 
-from ..common import KopisBase, WS_PATH, decode, encode, dom
+from ..common import KopisBase, WS_PATH, decode, encode
+from . import browser
 
 __all__ = ["Kopis"]
 
@@ -99,6 +100,20 @@ class Kopis(KopisBase):
 
     side = "server"
 
+    #: The document created when the root has no ``index.html`` and
+    #: ``k.document`` is never assigned (brython mode).
+    _DEFAULT_DOCUMENT = """\
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+
+    <body>
+    </body>
+</html>
+"""
+
     def __init__(
         self,
         root: str | Path | None = None,
@@ -112,9 +127,10 @@ class Kopis(KopisBase):
             entry = _entry_script()
             self.root = entry.parent if entry is not None else Path.cwd()
 
-        self._document: str | None = None
-        self._tree: dom.Document | None = None
-        self._served: str | None = None
+        self._entry = _entry_script()
+        self._brython = self.use == "brython"
+        self._document: str | None = None  # the HTML assigned to k.document
+        self._served: str | None = None  # cache of the document served at /
 
         # RPC state.
         self._instance = uuid.uuid4().hex  # distinguishes call ids across restarts
@@ -143,44 +159,173 @@ class Kopis(KopisBase):
 
         self.app.router.add_static("/", self.root, follow_symlinks=True)
 
-        self._brython = self.use == "brython"
         if self._brython:
             self._setup_brython()
 
-    @property
-    def document(self) -> dom.Document:
-        """The parsed HTML document served at ``/`` (a live view of it).
+        self._register_document()
 
-        In brython mode the browser builds the live DOM by running the
-        same application code under Brython; the server keeps its own
-        copy of the same tree, which the unified code works on
-        identically (event handlers are recorded on it but never fired).
-        """
-        return self._parse()
+    # -- document ------------------------------------------------------------
+
+    @property
+    def document(self) -> browser.DOMNode:
+        """The document served at ``/`` (a stand-in of the brython
+        ``browser.document`` object; there is no live DOM on the server,
+        so DOM operations on it succeed but do nothing)."""
+        return browser.document
 
     @document.setter
     def document(self, value: str) -> None:
         self._document = value
-        self._tree = None
+        self._served = None
+        self._register_document()
+
+    def _register_document(self) -> None:
+        """Register the served document as ``document`` of the server
+        stand-ins (the brython ``browser.document`` object)."""
+        try:
+            browser.set_document(self._served_document())
+        except FileNotFoundError:
+            pass  # no document yet (nothing assigned, no index.html)
+
+    def _source_html(self) -> str:
+        """The HTML the document is built from: the string assigned to
+        ``k.document``, else the root's ``index.html``, else (brython
+        mode) the default document."""
+        if self._document is not None:
+            return self._document
+        index = self.root / "index.html"
+        if index.is_file():
+            return index.read_text()
         if self._brython:
-            self._served = value
+            return self._DEFAULT_DOCUMENT
+        raise FileNotFoundError(index)
 
-    def _parse(self) -> dom.Document:
-        """The document parsed with the minimal DOM library, cached until
-        changed. The tree is also registered as ``browser.document`` of
-        the stand-in ``browser`` package, so unified code can use the
-        brython high-level API on the server as well."""
-        if self._tree is None:
-            if self._document is None:
-                index = self.root / "index.html"
-                if not index.is_file():
-                    raise FileNotFoundError(index)
-                self._document = index.read_text()
-            self._tree = dom.parse_html(self._document)
-            import browser  # The stand-in browser package (server side).
+    def _served_document(self) -> str:
+        """The document served at ``/`` (cached until changed)."""
+        if self._served is None:
+            html = self._source_html()
+            self._served = self._annotate(html) if self._brython else html
+        return self._served
 
-            browser.set_document(self._tree)
-        return self._tree
+    @staticmethod
+    def _insert_before(html: str, close_tag: str, content: str) -> str:
+        """Insert ``content`` just before the first ``close_tag``."""
+        idx = html.lower().find(close_tag)
+        if idx == -1:
+            raise ValueError(f"no {close_tag} in the document")
+        return html[:idx] + content + html[idx:]
+
+    def _annotate(self, html: str) -> str:
+        """Annotate ``html`` with the Brython scripts (in ``<head>``) and
+        the app entry script (in ``<body>``), wrapping a bare fragment
+        in a full document when needed.
+
+        The browser parses the served HTML and runs the app code under
+        Brython on the live DOM it builds, so the served document must
+        carry the scripts; the server itself never parses the document.
+        """
+        head_scripts = (
+            '<script type="text/javascript" src="brython.js"></script>'
+            '<script type="text/javascript" src="brython_stdlib.js"></script>'
+        )
+        body_scripts = ""
+        entry = self._entry
+        if entry is not None and entry.is_file():
+            body_scripts = f'<script type="text/python" src="/{entry.name}"></script>'
+        if "<html" not in html.lower():
+            return (
+                "<html><head>"
+                f"{head_scripts}"
+                f"</head><body>{html}{body_scripts}</body></html>"
+            )
+        if "</head>" not in html.lower():
+            start = html.lower().find("<html")
+            end = html.find(">", start)
+            if end == -1:
+                raise ValueError("no <html> start tag in the document")
+            html = html[: end + 1] + f"<head>{head_scripts}</head>" + html[end + 1 :]
+        else:
+            html = self._insert_before(html, "</head>", head_scripts)
+        if body_scripts:
+            if "</body>" not in html.lower():
+                html = html.rstrip() + f"<body>{body_scripts}</body>"
+            else:
+                html = self._insert_before(html, "</body>", body_scripts)
+        return html
+
+    def _setup_brython(self) -> None:
+        """Set up the app to run client-side code with Brython.
+
+        Serves the JavaScript files of the installed ``brython`` package
+        at ``/brython.js`` and ``/brython_stdlib.js``, and serves the
+        whole ``kopis`` package at the URLs Brython's import system
+        expects (so e.g. ``from kopis import ...`` in app code
+        resolves). The served document is annotated with the Brython
+        scripts and the app entry script by :meth:`_annotate`.
+        """
+        import brython  # Optional dependency, required only for use="brython".
+
+        # Serve the brython scripts from where the package installed them.
+        brython_path = Path(brython.__file__).parent
+        self.add_static_file("/brython.js", brython_path / "data" / "brython.js")
+        self.add_static_file(
+            "/brython_stdlib.js", brython_path / "data" / "brython_stdlib.js"
+        )
+
+        # Serve the `kopis` package at the URLs Brython's import system
+        # expects, so e.g. ``from kopis import Kopis`` in app code
+        # resolves. Every ``.py`` file in the package is served at its
+        # corresponding URL, so any module the client imports exists.
+        # This file lives in ``kopis/server/``, so the package root is
+        # one level up.
+        kopis_path = Path(__file__).resolve().parent.parent
+        for file in sorted(kopis_path.rglob("*.py")):
+            url = "/kopis/" + file.relative_to(kopis_path).as_posix()
+            self.add_static_file(url, file)
+
+    def add_static_file(self, path: str, file_path: str | Path) -> None:
+        """Serve a single file at the URL ``path``.
+
+        The explicit route takes precedence over the root static route,
+        so files outside the root directory (e.g. data shipped with an
+        installed package) can be served directly::
+
+            k.add_static_file("/brython.js", brython_js_path)
+        """
+        file_path = Path(file_path).resolve()
+
+        async def _handler(_request: web.Request) -> web.FileResponse:
+            return web.FileResponse(file_path)
+
+        self.app.router.add_get(path, _handler)
+
+    async def _serve_document(self, request: web.Request) -> web.Response:
+        """Serve the document at ``/``.
+
+        The browser parses the served HTML and, in brython mode, runs
+        the same application code under Brython on the live DOM it
+        builds; the server never parses the document itself. The
+        session cookie also identifies the client that loads the
+        document.
+        """
+        try:
+            text = self._served_document()
+        except FileNotFoundError:
+            raise web.HTTPNotFound()
+
+        session = await get_session(request)
+        self._ensure_client_id(session)
+
+        return web.Response(text=text, content_type="text/html")
+
+    @staticmethod
+    def _ensure_client_id(session: Session) -> str:
+        """Return the client id stored in ``session``, creating one if needed."""
+        client_id = session.get("client_id")
+        if client_id is None:
+            client_id = uuid.uuid4().hex
+            session["client_id"] = client_id
+        return client_id
 
     # -- RPC ----------------------------------------------------------------
 
@@ -333,132 +478,6 @@ class Kopis(KopisBase):
             else:
                 del self._pending_calls[client_id]
         self._settle_result(future, msg)
-
-    # -- document and static files -------------------------------------------
-
-    def _setup_brython(self) -> None:
-        """Set up the app to run client-side code with Brython.
-
-        Serves the JavaScript files of the installed ``brython`` package
-        at ``/brython.js`` and ``/brython_stdlib.js``, serves the whole
-        ``kopis`` package at the URLs Brython's import system expects
-        (so e.g. ``from kopis import ...`` in app code resolves),
-        initializes a default document with the Brython scripts in its
-        ``<head>``, and attaches the running script (the app) to the
-        document as a Brython script, so the same application code runs
-        in the browser under Brython. The package's ``__init__``
-        differentiates the sides, so ``import kopis`` in browser code
-        picks the client side.
-        """
-        import brython  # Optional dependency, required only for use="brython".
-
-        # Locate the JavaScript files shipped with the installed `brython` package.
-        brython_path = Path(brython.__file__).parent
-        brython_js = brython_path / "data" / "brython.js"
-        brython_stdlib_js = brython_path / "data" / "brython_stdlib.js"
-
-        # Serve the brython scripts from where the package installed them.
-        self.add_static_file("/brython.js", brython_js)
-        self.add_static_file("/brython_stdlib.js", brython_stdlib_js)
-
-        # Serve the `kopis` package at the URLs Brython's import system
-        # expects, so e.g. ``from kopis import Kopis`` in app code
-        # resolves. Every ``.py`` file in the package is served at its
-        # corresponding URL, so any module the client imports exists.
-        # This file lives in ``kopis/server/``, so the package root is
-        # two levels up.
-        kopis_path = Path(__file__).resolve().parent.parent
-        for file in sorted(kopis_path.rglob("*.py")):
-            url = "/kopis/" + file.relative_to(kopis_path).as_posix()
-            self.add_static_file(url, file)
-
-        self.document = """
-            <html>
-                <head>
-                    <meta charset="utf-8">
-                </head>
-
-                <body>
-                </body>
-            </html>
-        """
-
-        # The parsed tree is also where the (server-side) app code runs;
-        # the browser builds the live DOM from the same code.
-        doc = self._parse()
-
-        with doc.head as el:
-            viewport = dom.Element("meta", name="viewport")
-            viewport["content"] = "width=device-width, initial-scale=1"
-            el.append(viewport)
-            el.append(
-                dom.Element("script", type="text/javascript", src=brython_js.name)
-            )
-            el.append(
-                dom.Element("script", type="text/javascript", src=brython_stdlib_js.name)
-            )
-
-        # Attach the running script (the app) as a Brython script, so the
-        # same application code runs in the browser under Brython.
-        entry = _entry_script()
-        if entry is not None and entry.is_file():
-            with doc.body as el:
-                el.append(dom.Element("script", type="text/python", src=f"/{entry.name}"))
-
-        # The browser runs the same app code and appends to the live DOM,
-        # so the server serves this frozen skeleton; the tree keeps
-        # growing as the (server-side) app code runs against it.
-        self._served = str(doc)
-
-    def add_static_file(self, path: str, file_path: str | Path) -> None:
-        """Serve a single file at the URL ``path``.
-
-        The explicit route takes precedence over the root static route,
-        so files outside the root directory (e.g. data shipped with an
-        installed package) can be served directly::
-
-            k.add_static_file("/brython.js", brython_js_path)
-        """
-        file_path = Path(file_path).resolve()
-
-        async def _handler(_request: web.Request) -> web.FileResponse:
-            return web.FileResponse(file_path)
-
-        self.app.router.add_get(path, _handler)
-
-    async def _serve_document(self, request: web.Request) -> web.Response:
-        """Serve the document, rendered as valid HTML.
-
-        In brython mode the frozen skeleton is served (the browser runs
-        the same application code and appends to the live DOM); otherwise
-        the live tree is re-serialized with the minimal DOM library, so
-        the client always receives a canonical, valid form of the
-        document. The session cookie also identifies the client that
-        loads the document.
-        """
-        try:
-            if self._brython and self._served is not None:
-                text = self._served
-            else:
-                text = str(self._parse())
-        except FileNotFoundError:
-            raise web.HTTPNotFound()
-        except dom.ParseError as exc:
-            raise web.HTTPInternalServerError(text=str(exc))
-
-        session = await get_session(request)
-        self._ensure_client_id(session)
-
-        return web.Response(text=text, content_type="text/html")
-
-    @staticmethod
-    def _ensure_client_id(session: Session) -> str:
-        """Return the client id stored in ``session``, creating one if needed."""
-        client_id = session.get("client_id")
-        if client_id is None:
-            client_id = uuid.uuid4().hex
-            session["client_id"] = client_id
-        return client_id
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
         web.run_app(self.app, host=host, port=port)

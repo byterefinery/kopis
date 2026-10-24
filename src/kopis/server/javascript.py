@@ -1,9 +1,9 @@
-"""The ``javascript`` module of kopis (server side).
+"""The ``javascript`` stand-in module (server side).
 
 In the browser under Brython, ``javascript`` is a built-in module
-exposing Javascript values and constructors. Under CPython this package
-is aliased to the top-level name ``javascript`` (see
-:mod:`kopis`) so unified code can ``import javascript`` on both sides.
+exposing Javascript values and constructors. On the server it is the
+stand-in re-exported by :mod:`kopis`, so unified code can
+``from kopis import javascript`` unmodified.
 
 The brython **special values** :data:`NULL` and :data:`UNDEFINED` are
 real singletons with the brython semantics: falsy, ``NULL == UNDEFINED``
@@ -65,9 +65,7 @@ class UndefinedType(_JSType):
 
     def __str__(self) -> str:
         # As in brython, the undefined value has no ``str`` conversion.
-        raise TypeError(
-            "descriptor '__str__' of 'object' object needs an argument"
-        )
+        raise TypeError("descriptor '__str__' of 'object' object needs an argument")
 
     def __repr__(self) -> str:
         return "<Javascript undefined>"

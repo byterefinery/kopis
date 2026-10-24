@@ -7,22 +7,46 @@ web server, no root directory. ``k.run()`` and ``k.add_static_file()``
 are no-ops here; ``k.document`` is the browser document (the live DOM);
 and ``k.register``/``k.rpc`` implement the RPC client half.
 
+The brython objects the unified code works with — ``document``,
+``window``, ``bind``, ``DOMNode``, ``DOMEvent``, ``html``, ``aio``,
+``ajax``, ``timer``, and ``javascript`` — are the built-in ``browser``
+and ``javascript`` modules, re-exported under the ``kopis`` names: app
+code imports them from ``kopis``, never from ``browser`` directly.
+
 Calls and results travel both ways over a single WebSocket connection
 per browser tab (``/__kopis__/rpc``), re-opened automatically on
 disconnect. The browser's implicit event loop drives everything;
 ``aio.run`` starts a coroutine without blocking.
 """
 
+from browser import (
+    aio,
+    ajax,
+    bind,
+    DOMEvent,
+    DOMNode,
+    document,
+    html,
+    timer,
+    window,
+)
+import javascript
+
 from .app import Kopis
-from .brython import aio, bind, browser_document as document, javascript
 from ..common import Placeholder, RpcError
 
 __all__ = [
+    "DOMEvent",
+    "DOMNode",
     "Kopis",
     "Placeholder",
     "RpcError",
     "aio",
+    "ajax",
     "bind",
     "document",
+    "html",
     "javascript",
+    "timer",
+    "window",
 ]

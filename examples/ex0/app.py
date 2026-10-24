@@ -44,7 +44,6 @@ def btn0_click(e: object) -> None:
             "btn0_click", e, Point(3, 4)
         )  # short way for k.rpc.server_button_click(...)
         print("btn0_click result:", v)
-        # k.document.body.append(f"\n{v!s}")
         k.document <= f"\n{v!s}"
 
     aio.run(roundtrip())
@@ -56,7 +55,6 @@ btn = k.document.createElement("button")
 btn["id"] = "btn0"
 btn <= "Demo"
 k.document.body <= btn
-
 btn.addEventListener("click", btn0_click)
 
 print("k", k)
