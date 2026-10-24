@@ -8,16 +8,26 @@ subpackage importable for tooling and type-checking.
 import platform
 
 if platform.python_implementation() == "Brython":
-    from browser import aio, window, websocket
+    from browser import DOMNode, aio, bind, window, websocket
     from browser import document as browser_document
     import javascript
 else:
     from unittest.mock import MagicMock
 
+    DOMNode = MagicMock()
     aio = MagicMock()
+    bind = MagicMock()
     browser_document = MagicMock()
     javascript = MagicMock()
-    window = MagicMock()
     websocket = MagicMock()
+    window = MagicMock()
 
-__all__ = ["aio", "browser_document", "javascript", "websocket", "window"]
+__all__ = [
+    "DOMNode",
+    "aio",
+    "bind",
+    "browser_document",
+    "javascript",
+    "websocket",
+    "window",
+]

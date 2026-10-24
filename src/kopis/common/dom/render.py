@@ -89,7 +89,7 @@ def _render_element_inline(element: Element) -> str:
     """Serialize an element on one line."""
     if element.tag in VOID_TAGS:
         return f"<{element.tag}{_render_attrs(element.attrs)}/>"
-    inner = "".join(render_inline(child, element.tag) for child in element.children)
+    inner = "".join(render_inline(child, element.tag) for child in element._nodes)
     return f"<{element.tag}{_render_attrs(element.attrs)}>{inner}</{element.tag}>"
 
 
@@ -99,15 +99,15 @@ def render_element(element: Element, indent: int = 0) -> str:
     attrs = _render_attrs(element.attrs)
     if element.tag in VOID_TAGS:
         return f"{pad}<{element.tag}{attrs}/>"
-    if not element.children:
+    if not element._nodes:
         return f"{pad}<{element.tag}{attrs}></{element.tag}>"
-    texts = [child for child in element.children if isinstance(child, str)]
-    if len(texts) == len(element.children):
+    texts = [child for child in element._nodes if isinstance(child, str)]
+    if len(texts) == len(element._nodes):
         text = _render_text(element.tag, "".join(texts), block=True)
         return f"{pad}<{element.tag}{attrs}>{text}</{element.tag}>"
     lines = [f"{pad}<{element.tag}{attrs}>"]
     child_pad = _INDENT * (indent + 1)
-    for child in element.children:
+    for child in element._nodes:
         if isinstance(child, str):
             text = _render_text(element.tag, child, block=True)
             if text:

@@ -311,7 +311,7 @@ class _Parser:
             while k < self.end and self.text[k] in _WS:
                 k += 1
             if k < self.end and self.text[k] == ">":
-                element.children.append(self.text[self.pos : idx])
+                element._nodes.append(self.text[self.pos : idx])
                 self.pos = k + 1
                 return
             search = k  # a different tag name; keep scanning
@@ -334,11 +334,11 @@ class _Parser:
             if self.text[self.pos] == "<":
                 child = self._parse_element()
                 child.parent = element
-                element.children.append(child)
+                element._nodes.append(child)
                 continue
             text = self._read_text()
             if text:
-                element.children.append(text)
+                element._nodes.append(text)
 
     def _read_end_tag(self, expected: str) -> None:
         """Read ``</name>`` and check that ``name`` is ``expected``."""

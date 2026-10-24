@@ -15,7 +15,7 @@ disconnect. The browser's implicit event loop drives everything;
 
 from .app import Kopis
 from .document import Document, Element
-from .brython import aio, browser_document as document, javascript
+from .brython import aio, bind, browser_document as document, javascript
 from ..common import Placeholder, RpcError
 
 __all__ = [
@@ -25,6 +25,7 @@ __all__ = [
     "Placeholder",
     "RpcError",
     "aio",
+    "bind",
     "document",
     "javascript",
 ]

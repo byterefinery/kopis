@@ -2,14 +2,16 @@
 
 Every module in this subpackage runs unmodified on both the server
 (CPython) and the client (Brython, in the browser): no web server, no
-DOM, no implementation-specific machinery. The server-side and
+live DOM, no implementation-specific machinery. The server-side and
 client-side halves of ``kopis`` import their shared code from here: the
 RPC wire format (:mod:`~kopis.common.wire`), the ``Kopis`` base class
 (:mod:`~kopis.common.base`), and the minimal DOM library
 (:mod:`~kopis.common.dom`), whose :class:`~kopis.common.dom.Document`
 and :class:`~kopis.common.dom.Element` classes mirror the brython
-``browser`` objects and are used by the server to parse and prettify
-the document it serves.
+``browser`` objects. The server uses that library to parse and
+prettify the document it serves (and, outside brython mode, hands its
+trees out as ``k.document``); the client instead works on the live
+browser document directly.
 """
 
 from . import dom

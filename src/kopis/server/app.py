@@ -4,10 +4,10 @@ A web application served from a root directory: files in the root
 directory are served as static assets, and the ``document`` is served at
 ``/``. The document is either an in-memory string assigned to
 ``k.document``, or the ``index.html`` file in the root directory.
-``k.document`` also gives a :class:`~kopis.server.document.Document` view
-that supports adding HTML elements to existing elements, and
-:meth:`Kopis.add_static_file` serves files from anywhere on disk at a
-chosen URL.
+``k.document`` also gives a :class:`~kopis.common.dom.Document` view of
+the parsed document that supports adding HTML elements to existing
+elements, and :meth:`Kopis.add_static_file` serves files from anywhere
+on disk at a chosen URL.
 
 By default (``use="brython"``), the app runs client-side Python code with
 `Brython <https://brython.info>`_: the Brython scripts and the modules of
@@ -36,17 +36,56 @@ import hashlib
 import itertools
 import sys
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 
 from ..common import KopisBase, WS_PATH, decode, encode, dom
-from .document import Document, _Noop
 
 __all__ = ["Kopis"]
+
+
+class _Noop:
+    """A no-op stand-in for the document (and its elements) on the server.
+
+    In brython mode the document is built in the browser, where the same
+    application code runs under Brython. Document operations therefore do
+    nothing on the server (but never fail), so the unified application
+    code can run unmodified on both sides.
+    """
+
+    def append(self, *fragments: str) -> Self:
+        return self
+
+    def addEventListener(self, event: str, handler: Callable[..., Any]) -> Self:
+        return self
+
+    def querySelector(self, selector: str) -> Self:
+        return self
+
+    def __getitem__(self, name: object) -> Self:
+        return self
+
+    def __le__(self, content: object) -> None:
+        return None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> Self:
+        # Any attribute (e.g. ``body``, ``head``) resolves to the same
+        # no-op, so chained lookups keep working. Dunder lookups must keep
+        # failing as usual.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self
 
 
 def _entry_script() -> Path | None:
@@ -139,8 +178,8 @@ class Kopis(KopisBase):
             self._setup_brython()
 
     @property
-    def document(self) -> Document | _Noop:
-        """A live view of the HTML document served at ``/``.
+    def document(self) -> dom.Document | _Noop:
+        """The parsed HTML document served at ``/`` (a live view of it).
 
         In brython mode the document is built in the browser (by the same
         application code running under Brython), so this view is a no-op
@@ -148,7 +187,7 @@ class Kopis(KopisBase):
         """
         if self._brython:
             return self._noop
-        return Document(self)
+        return self._parse()
 
     @document.setter
     def document(self, value: str) -> None:
@@ -367,12 +406,12 @@ class Kopis(KopisBase):
             </html>
         """
 
-        # The real (source) view is used for the framework's own setup;
+        # The parsed tree is used for the framework's own setup;
         # the ``k.document`` property is a no-op in brython mode because
         # the document is built in the browser.
-        doc = Document(self)
+        doc = self._parse()
 
-        with doc["head"] as el:
+        with doc.head as el:
             el.append(
                 '<meta name="viewport" content="width=device-width, initial-scale=1">'
             )
@@ -387,7 +426,7 @@ class Kopis(KopisBase):
         # same application code runs in the browser under Brython.
         entry = _entry_script()
         if entry is not None and entry.is_file():
-            with doc["body"] as el:
+            with doc.body as el:
                 el.append(f'<script type="text/python" src="/{entry.name}"></script>')
 
     def add_static_file(self, path: str, file_path: str | Path) -> None:
