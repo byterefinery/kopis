@@ -8,8 +8,10 @@ assigned string takes precedence); :meth:`Kopis.add_static_file` serves
 files from anywhere on disk at a chosen URL.
 
 The server never parses the document: in the brython way, the browser
-parses the HTML it loads, and the client side has no HTML parsing of
-its own. ``k.document`` on the server is therefore a stand-in of the
+parses the HTML it loads. (The client can parse fragments on demand with
+``k.parse_html``; on the server that is a stand-in returning a
+``browser.DOMNode``, since the server itself never parses HTML.)
+``k.document`` on the server is therefore a stand-in of the
 brython ``browser.document`` object (a
 :class:`~kopis.server.browser.DOMNode` of the raw HTML string served at
 ``/``): unified code works on it identically to the live DOM in the
@@ -32,9 +34,12 @@ Inside a registered function, ``k.rpc`` targets the client that made
 the call; calls can also be sent explicitly with ``k.call(client_id,
 ...)``. Calls and results travel both
 ways over a single WebSocket connection per client
-(``/__kopis__/rpc``), which the client re-opens on disconnect. Clients
-are identified by an encrypted session cookie, and all exchanged data
-is JSON: the values of ``args``, ``kwargs``, and ``result`` are pickled
+(``/__kopis__/rpc``), which the client re-opens on disconnect. Each
+tab announces its own random ``client_id`` in the WebSocket URL (all
+tabs of a browser share the same session cookie, which would make them
+collide; the cookie identity remains as a fallback for clients that
+don't announce one), and all exchanged data is JSON: the values of
+``args``, ``kwargs``, and ``result`` are pickled
 Python objects (base64-encoded in the JSON), and a value that cannot be
 (de)serialized arrives as a ``Placeholder`` carrying the string of the
 exception.
@@ -299,6 +304,16 @@ class Kopis(KopisBase):
 
         self.app.router.add_get(path, _handler)
 
+    def parse_html(self, html_str: str) -> list[browser.DOMNode]:
+        """Parse an HTML fragment into elements (a stand-in).
+
+        The server has no live DOM, so the fragment is not parsed: a list
+        holding one stand-in ``browser.DOMNode`` is returned, and DOM
+        operations on it succeed but do nothing — the browser parses the
+        same fragment under Brython.
+        """
+        return [browser.DOMNode()]
+
     async def _serve_document(self, request: web.Request) -> web.Response:
         """Serve the document at ``/``.
 
@@ -378,13 +393,16 @@ class Kopis(KopisBase):
         ran. Results come back as ``result`` messages.
         """
         session = await get_session(request)
-        client_id = session.get("client_id")
+        client_id = request.query.get("client_id")
         if client_id is None:
-            # Give the client a new identity. A successful upgrade (101)
-            # cannot carry the session cookie, but this 400 can, so the
-            # client's reconnect attempt right after it connects cleanly.
-            self._ensure_client_id(session)
-            raise web.HTTPBadRequest(text="no session yet; try again")
+            # No announced id: fall back to the session cookie identity.
+            client_id = session.get("client_id")
+            if client_id is None:
+                # Give the client a new identity. A successful upgrade (101)
+                # cannot carry the session cookie, but this 400 can, so the
+                # client's reconnect attempt right after it connects cleanly.
+                self._ensure_client_id(session)
+                raise web.HTTPBadRequest(text="no session yet; try again")
 
         ws = web.WebSocketResponse(heartbeat=20)
         await ws.prepare(request)
@@ -393,6 +411,10 @@ class Kopis(KopisBase):
         self._streams[client_id] = stream
         if old is not None:
             old.close()
+            try:
+                await old.ws.close()
+            except Exception:  # noqa: BLE001, S110 - the old socket is usually already dead
+                pass
         for call in list(self._pending_calls.get(client_id, [])):
             stream.push(call)
         sender = asyncio.ensure_future(self._ws_send(stream))

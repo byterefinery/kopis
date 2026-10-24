@@ -78,7 +78,9 @@ class Magic:
     def __le__(self, other: object) -> Magic:
         """Append ``other`` (the brython ``<=``, an alias of ``attach``).
 
-        Returns ``self`` as in brython, so calls can be chained."""
+        A string argument is first parsed as an HTML fragment on the
+        client (the server is a no-op either way). Returns ``self`` as
+        in brython, so calls can be chained."""
         return self
 
     def attach(self, other: object) -> Magic:

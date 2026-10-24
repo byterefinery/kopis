@@ -72,7 +72,8 @@ class KopisBase(ABC):
     this class. It implements the parts of the unified API that are
     identical on both sides of the web stack (see the module docstring);
     the sides implement the platform-specific parts: the ``document``
-    property, :meth:`run`, :meth:`add_static_file`, and :meth:`_rpc_call`.
+    property, :meth:`run`, :meth:`add_static_file`, :meth:`parse_html`,
+    and :meth:`_rpc_call`.
     """
 
     #: Name of this side of the wire, used in error messages.
@@ -122,6 +123,11 @@ class KopisBase(ABC):
     @abstractmethod
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """Serve a file at a URL (server side); no-op on the client side."""
+
+    @abstractmethod
+    def parse_html(self, html_str: str) -> list[Any]:
+        """Parse an HTML fragment into brython elements: the list of the
+        fragment's top-level elements, in order (possibly empty)."""
 
     @abstractmethod
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:

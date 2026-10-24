@@ -51,11 +51,10 @@ def btn0_click(e: object) -> None:
 
 k.document <= "Hello 4 !"
 
-btn = k.document.createElement("button")
-btn["id"] = "btn0"
-btn <= "Demo"
-k.document.body <= btn
-btn.addEventListener("click", btn0_click)
+k.document.body <= """
+<button id="btn0">Demo</button>
+"""  # a string is parsed as an HTML fragment, then added
+k.document["btn0"].addEventListener("click", btn0_click)
 
 print("k", k)
 k.run()

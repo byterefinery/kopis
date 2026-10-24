@@ -10,12 +10,14 @@ coroutine without blocking.
 """
 
 import itertools
+import uuid
 from pathlib import Path
 from typing import Any
 
 from browser import DOMNode, aio, document, window, websocket
 
 from ..common import KopisBase, RpcError, WS_PATH, decode, encode
+from .parse_html import parse_html as _parse_html
 
 __all__ = ["Kopis"]
 
@@ -23,12 +25,23 @@ _RETRY_DELAY = 1.0  # pause before reopening a dropped connection
 _DONE_CAP = 1000  # completed calls remembered, to deduplicate replayed calls
 
 
-def _ws_url() -> str:
-    """The WebSocket URL of the server, derived from the page URL."""
+def _client_id() -> str:
+    """A random identity of this tab (fresh on every page load).
+
+    All tabs of a browser share the same session cookie, so a
+    cookie-derived identity would make the tabs collide on the server;
+    each tab therefore announces its own id with the WebSocket URL.
+    """
+    return uuid.uuid4().hex
+
+
+def _ws_url(client_id: str) -> str:
+    """The WebSocket URL of the server, derived from the page URL,
+    carrying the tab's ``client_id``."""
     url = str(window.location.href)
     if url.startswith("http"):
         url = url.replace("http", "ws", 1)
-    return url.rstrip("/") + WS_PATH
+    return url.rstrip("/") + WS_PATH + f"?client_id={client_id}"
 
 
 class Kopis(KopisBase):
@@ -64,6 +77,7 @@ class Kopis(KopisBase):
         ] = {}  # (instance, call id) -> result
         self._outbox: list[dict[str, Any]] = []  # messages waiting for the connection
         self._next_id = itertools.count(1)
+        self._client_id = _client_id()  # this tab's identity on the server
         self._ws: Any = None
         self._open = False
         self._closed_by_user = False
@@ -77,6 +91,19 @@ class Kopis(KopisBase):
 
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """No-op on the client: files are served by the server."""
+
+    def parse_html(self, html_str: str) -> list[DOMNode]:
+        """Parse an HTML fragment into brython ``browser.html`` elements:
+        the list of the fragment's top-level elements, in order (possibly
+        empty).
+
+        Standard HTML markup only — see ``kopis.client.parse_html`` for the
+        parser. (Appending a string directly — ``element <= html_str``,
+        ``element.attach(html_str)``, or ``element.append(html_str)`` —
+        parses the fragment first and appends its top-level nodes; see
+        ``kopis.client.dom``.)
+        """
+        return _parse_html(html_str)
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
         """No-op on the client: the web server runs on the server side."""
@@ -107,7 +134,7 @@ class Kopis(KopisBase):
 
     def _connect(self) -> None:
         """Open (re-open) the WebSocket connection to the server."""
-        ws = websocket.WebSocket(_ws_url())
+        ws = websocket.WebSocket(_ws_url(self._client_id))
         self._ws = ws
         self._open = False
 

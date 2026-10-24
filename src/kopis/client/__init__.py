@@ -33,6 +33,7 @@ from browser import (
 import javascript
 
 from .app import Kopis
+from .dom import install as _install_dom
 from ..common import Placeholder, RpcError
 
 __all__ = [
@@ -50,3 +51,7 @@ __all__ = [
     "timer",
     "window",
 ]
+
+# Extend the DOM append interface (a string appended with <=, attach,
+# or append is parsed as an HTML fragment first).
+_install_dom()
