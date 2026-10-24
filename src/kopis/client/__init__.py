@@ -52,6 +52,7 @@ __all__ = [
     "window",
 ]
 
-# Extend the DOM append interface (a string appended with <=, attach,
-# or append is parsed as an HTML fragment first).
+# Extend the DOM (client side): a string appended with <= or attach is
+# parsed as an HTML fragment first, and a coroutine function bound to an
+# event is started with aio.run when the event fires.
 _install_dom()
