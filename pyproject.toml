@@ -29,7 +29,9 @@ dev = [
 extend-exclude = [".agents"]
 
 [tool.ruff.lint]
-ignore = ["I001"]
+# B015 (pointless comparison) cannot see through the overloaded `<=`
+# operator, which in this codebase is the brython-style DOM append.
+ignore = ["B015", "I001"]
 
 [tool.ty.analysis]
 allowed-unresolved-imports = ["browser", "javascript"]

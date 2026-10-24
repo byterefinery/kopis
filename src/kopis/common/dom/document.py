@@ -37,7 +37,7 @@ class Document:
     @property
     def body(self) -> Element:
         """The ``<body>`` element (``AttributeError`` when absent)."""
-        el = self.querySelector("body")
+        el = self.select_one("body")
         if el is None:
             raise AttributeError("no <body> element in the document")
         return el
@@ -45,7 +45,7 @@ class Document:
     @property
     def head(self) -> Element:
         """The ``<head>`` element (``AttributeError`` when absent)."""
-        el = self.querySelector("head")
+        el = self.select_one("head")
         if el is None:
             raise AttributeError("no <head> element in the document")
         return el
@@ -53,12 +53,12 @@ class Document:
     @property
     def title(self) -> str:
         """The text of the ``<title>`` element (``""`` when absent)."""
-        el = self.querySelector("title")
+        el = self.select_one("title")
         return el.text if el is not None else ""
 
     @title.setter
     def title(self, value: str) -> None:
-        el = self.querySelector("title")
+        el = self.select_one("title")
         if el is None:
             el = Element("title")
             self.head._add_element(el)
@@ -68,14 +68,13 @@ class Document:
         """All elements of the document, in document order."""
         return [self.root, *self.root._descendants()]
 
-    def querySelector(self, selector: str) -> Element | None:
-        """The first element of the document matching ``selector``, or
-        ``None``."""
-        parts = _selector_parts(selector)
-        for el in self._elements():
-            if _matches_selector(el, parts):
-                return el
-        return None
+    def querySelector(self, selector: str) -> Element:
+        """The first element of the document matching ``selector``
+        (``KeyError`` when absent)."""
+        el = self.select_one(selector)
+        if el is None:
+            raise KeyError(f"no element matching {selector!r} in the document")
+        return el
 
     def querySelectorAll(self, selector: str) -> list[Element]:
         """All elements of the document matching ``selector``, in
@@ -91,7 +90,11 @@ class Document:
     def select_one(self, selector: str) -> Element | None:
         """The first element of the document matching ``selector``, or
         ``None``."""
-        return self.querySelector(selector)
+        parts = _selector_parts(selector)
+        for el in self._elements():
+            if _matches_selector(el, parts):
+                return el
+        return None
 
     def get(
         self,
@@ -159,7 +162,7 @@ class Document:
 
     def __le__(self, content: object) -> None:
         """Append ``content`` to the document (its ``<body>``)."""
-        self.body <= content  # noqa: B015 (<= appends to the document)
+        self.body <= content
 
     def __enter__(self) -> Self:
         return self

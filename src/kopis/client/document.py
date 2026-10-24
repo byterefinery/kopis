@@ -51,14 +51,14 @@ class Element:
                     continue
                 self._element.insertAdjacentHTML("beforeend", item)
             else:
-                self._element <= item  # noqa: B015 (Brython's <= adds a child)
+                self._element <= item
         return self
 
     def __le__(self, content: object) -> None:
         """Append ``content`` as a child of this element."""
         if isinstance(content, Element):
             content = content._element
-        self._element <= content  # noqa: B015 (Brython's <= adds a child)
+        self._element <= content
 
     def __iter__(self):
         """Iterate the element's children (delegates to the DOM)."""
@@ -93,10 +93,13 @@ class Document:
     def __init__(self, document: Any) -> None:
         self._document = document
 
-    def querySelector(self, selector: str) -> Element | None:
-        """Return the first element matching ``selector``, or ``None``."""
+    def querySelector(self, selector: str) -> Element:
+        """Return the first element matching ``selector`` (``KeyError``
+        when absent)."""
         element = self._document.querySelector(selector)
-        return Element(element) if element is not None else None
+        if element is None:
+            raise KeyError(f"no element matching {selector!r} in the document")
+        return Element(element)
 
     def querySelectorAll(self, selector: str) -> list[Element]:
         """Return all elements matching ``selector``, in document order."""
@@ -123,7 +126,7 @@ class Document:
 
     def __le__(self, content: object) -> None:
         """Append ``content`` to the document (its body)."""
-        self._document <= content  # noqa: B015 (Brython's <= adds to the document)
+        self._document <= content
 
     def __enter__(self) -> Self:
         return self

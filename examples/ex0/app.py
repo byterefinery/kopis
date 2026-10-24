@@ -44,18 +44,20 @@ def btn0_click(e: object) -> None:
             "btn0_click", e, Point(3, 4)
         )  # short way for k.rpc.server_button_click(...)
         print("btn0_click result:", v)
-        k.document <= f"\n{v!s}"  # noqa: B015 (<= appends to the document)
+        # k.document.body.append(f"\n{v!s}")
+        k.document <= f"\n{v!s}"
 
     aio.run(roundtrip())
 
 
-k.document <= "Hello 4 !"  # noqa: B015 (<= appends to the document)
+# k.document.body.append("Hello 4 !")
+k.document <= "Hello 4 !"
 
 with k.document.body as el:
     el.append('<button id="btn0">Demo</button>')
 
-k.document.querySelector("#btn0").addEventListener("click", btn0_click)  # ty: ignore[unresolved-attribute]
+# k.document["btn0"].addEventListener("click", btn0_click)
+k.document.querySelector("#btn0").addEventListener("click", btn0_click)
 
 print("k", k)
-
 k.run()
