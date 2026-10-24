@@ -17,10 +17,12 @@ document as a Brython script, so the same application code runs in the
 browser under Brython. In brython mode the document is built in the
 browser, so ``k.document`` is a no-op view on the server.
 
-RPC: decorate a function with ``@k.bind`` to make it callable from the
-other side as ``await k.rpc.<name>(...)``. Inside a bound function,
-``k.rpc`` targets the client that made the call; calls can also be sent
-explicitly with ``k.call(client_id, ...)``. Calls and results travel both
+RPC: register a function with ``@k.rpc.register`` (the short way is
+``@k.register``) to make it callable from the other side as
+``await k.rpc.<name>(...)`` (the short way is ``await k.<name>(...)``).
+Inside a registered function, ``k.rpc`` targets the client that made
+the call; calls can also be sent explicitly with ``k.call(client_id,
+...)``. Calls and results travel both
 ways over a single WebSocket connection per client
 (``/__kopis__/rpc``), which the client re-opens on disconnect. Clients are
 identified by an encrypted session cookie, and all exchanged data is
@@ -211,7 +213,8 @@ class Kopis(KopisBase):
     def call(
         self, client_id: str, method: str, *args: object, **kwargs: object
     ) -> asyncio.Future:
-        """Queue a call to a function the client registered with :meth:`bind`.
+        """Queue a call to a function the client registered with
+        :meth:`~kopis.common.KopisBase.register`.
 
         Returns a future that resolves with the client's return value, or
         raises :class:`~kopis.common.RpcError` if the call failed there.

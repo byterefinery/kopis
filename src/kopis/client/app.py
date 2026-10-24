@@ -43,7 +43,7 @@ class Kopis(KopisBase):
         from kopis import Kopis
         k = Kopis()
 
-        @k.bind
+        @k.rpc.register
         async def client_fn(x): ...         # callable from the server
 
         result = await k.rpc.server_fn(x)   # calls a server function
@@ -89,7 +89,7 @@ class Kopis(KopisBase):
     async def _rpc_call(
         self, name: str, args: tuple[object, ...], kwargs: dict[str, object]
     ) -> object:
-        """Call a function bound on the server and await its result."""
+        """Call a function registered on the server and await its result."""
         call_id = next(self._next_id)
         fut = aio.Future()
         self._pending[call_id] = fut

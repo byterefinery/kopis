@@ -5,7 +5,7 @@ browser under Brython. It shares its API with the server-side half
 (the ``kopis.server`` subpackage); only the implementation differs: no
 web server, no root directory. ``k.run()`` and ``k.add_static_file()``
 are no-ops here; ``k.document`` is a live view of the browser document;
-and ``k.bind``/``k.rpc`` implement the RPC client half.
+and ``k.register``/``k.rpc`` implement the RPC client half.
 
 Calls and results travel both ways over a single WebSocket connection
 per browser tab (``/__kopis__/rpc``), re-opened automatically on

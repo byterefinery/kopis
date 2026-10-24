@@ -14,22 +14,22 @@ class Point:
         return f"Point({self.x}, {self.y})"
 
 
-@k.bind
+@k.rpc.register  # canonical way (k.register is the short way)
 async def server_button_click(name: str, e: object, point: Point) -> object:
     # Called by the client. `point` arrives as a real Point object (the
     # same class exists on both sides). `e` is a DOM event, which cannot
     # be pickled in the browser, so it arrives as a Placeholder carrying
-    # the exception string. Inside this bound function, k.rpc targets
-    # the client that called us.
+    # the exception string. Inside this registered function, k.rpc
+    # targets the client that called us.
     print("server_button_click", e, point)
     if isinstance(e, Placeholder):
         print("server_button_click: e could not be deserialized:", e.error)
-    v = await k.rpc.client_button_click(name, point)
+    v = await k.rpc.client_button_click(name, point)  # canonical way
     print("server_button_click", v)
     return v
 
 
-@k.bind
+@k.register  # short way (k.rpc.register is the canonical way)
 async def client_button_click(name: str, point: Point) -> int:
     # Called by the server; `point` is a real Point object.
     print("client_button_click", name, point)
@@ -40,7 +40,9 @@ def btn0_click(e: object) -> None:
     print("btn0_click", e)
 
     async def roundtrip() -> None:
-        v = await k.rpc.server_button_click("btn0_click", e, Point(3, 4))
+        v = await k.server_button_click(
+            "btn0_click", e, Point(3, 4)
+        )  # short way for k.rpc.server_button_click(...)
         print("btn0_click result:", v)
         k.document <= f"\n{v!s}"  # noqa: B015 (<= appends to the document)
 

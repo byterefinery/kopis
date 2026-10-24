@@ -6,10 +6,12 @@ implement its abstract methods. The base class implements everything
 the two sides do the same way:
 
 - validation of the ``use`` argument;
-- the registry of functions bound with :meth:`bind`, and :meth:`bind`
-  itself;
-- the ``k.rpc`` proxy, which calls a function bound on the other side
-  (the actual sending of the call is left to :meth:`_rpc_call`);
+- :meth:`register` (the canonical way ``k.rpc.register``, and the
+  short way ``k.register``), and the registry of the functions
+  registered with it;
+- the ``k.rpc`` proxy, which calls a function registered on the other
+  side (the actual sending of the call is left to :meth:`_rpc_call`);
+  ``k.name(...)`` is the short way for ``k.rpc.name(...)``;
 - :meth:`_dispatch`, which runs a function called by the other side
   and builds the ``result`` or ``error`` part of its payload;
 - :meth:`_settle_result`, which resolves the future of a pending call
@@ -28,8 +30,13 @@ __all__ = ["KopisBase"]
 
 
 class _Rpc:
-    """Proxy for ``k.rpc``: ``k.rpc.name(args)`` calls a function bound
-    on the other side.
+    """Proxy for ``k.rpc``: ``k.rpc.name(args)`` calls a function
+    registered on the other side.
+
+    ``k.rpc.register`` is the canonical way to register a function so
+    that the other side can call it; it delegates to the owner's
+    :meth:`KopisBase.register` (the short way for which is
+    ``k.register``).
 
     The proxy is identical on both sides; the actual sending of the
     call is done by :meth:`KopisBase._rpc_call`, which each side
@@ -38,6 +45,15 @@ class _Rpc:
 
     def __init__(self, owner: KopisBase) -> None:
         self._owner = owner
+
+    @property
+    def register(self) -> Callable[..., Any]:
+        """Register a function so that the other side can call it.
+
+        The owner's :meth:`KopisBase.register`; ``k.register`` is the
+        short way for ``k.rpc.register``.
+        """
+        return self._owner.register
 
     def __getattr__(self, name: str) -> Callable[..., Any]:
         if name.startswith("_"):
@@ -76,16 +92,32 @@ class KopisBase(ABC):
     def document(self) -> Any:
         """A live view of the document."""
 
-    def bind(self, func: Callable[..., Any]) -> Callable[..., Any]:
+    def register(self, func: Callable[..., Any]) -> Callable[..., Any]:
         """Register a function so that the other side can call it via
-        ``k.rpc``::
+        ``k.rpc`` (canonical way ``k.rpc.register``, short way
+        ``k.register``)::
 
-            @k.bind
+            @k.rpc.register
             async def add(x, y):
                 return x + y
         """
         self._bound[func.__name__] = func  # ty: ignore[unresolved-attribute] - a named function is required
         return func
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        """The short way for ``k.rpc.name``: ``k.name(...)`` calls a
+        function registered on the other side.
+
+        Only consulted for names that are not found the usual way, so
+        the ``Kopis`` API (``register``, ``rpc``, ``document``, ...)
+        is unaffected.
+        """
+        if name.startswith("_") or name == "rpc":
+            # ``rpc`` is the proxy itself; failing here (instead of
+            # dereferencing ``self.rpc``) also breaks any recursion if
+            # this is consulted before ``__init__`` has set it.
+            raise AttributeError(name)
+        return self.rpc.__getattr__(name)
 
     @abstractmethod
     def add_static_file(self, path: str, file_path: str | Path) -> None:
@@ -101,8 +133,8 @@ class KopisBase(ABC):
     async def _rpc_call(
         self, name: str, args: tuple[object, ...], kwargs: dict[str, object]
     ) -> object:
-        """Send a call to a function bound on the other side and await
-        its result."""
+        """Send a call to a function registered on the other side and
+        await its result."""
 
     async def _dispatch(
         self, method: str | None, args: list[object], kwargs: dict[str, object]
@@ -111,7 +143,7 @@ class KopisBase(ABC):
         ``result`` or ``error`` part of its payload.
 
         ``method`` is the name of a function registered with
-        :meth:`bind` (or ``None`` if the call is malformed); ``args``
+        :meth:`register` (or ``None`` if the call is malformed); ``args``
         and ``kwargs`` are the arguments sent by the other side,
         restored from their pickles.
         """
@@ -120,7 +152,7 @@ class KopisBase(ABC):
             return {
                 "error": {
                     "type": "NameError",
-                    "message": f"no function {method!r} bound on the {self.side}",
+                    "message": f"no function {method!r} registered on the {self.side}",
                 }
             }
         if not isinstance(args, list) or not isinstance(kwargs, dict):

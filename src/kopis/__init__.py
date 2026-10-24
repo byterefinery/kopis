@@ -16,7 +16,7 @@ and to the client side in browser code. By default (``use="brython"``),
 the server serves this whole package to the browser, so the same
 differentiation runs there.
 
-Both sides expose the same unified API — ``Kopis`` (with ``bind``,
+Both sides expose the same unified API — ``Kopis`` (with ``register``,
 ``rpc``, ``document``, ``add_static_file``, and ``run``), ``aio``,
 ``bind`` (the event-binding decorator), ``RpcError``, and
 ``Placeholder`` — so a single application file can run unmodified on
