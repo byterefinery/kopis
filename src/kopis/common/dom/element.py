@@ -3,9 +3,10 @@
 :class:`Element` mirrors a brython DOM element (a ``browser`` ``DOMNode``):
 ``tag``, ``attrs``, ``parent``, and the ``html``, ``text``, ``id``,
 ``children``, ``child_nodes``, ``style``, ``value``, ``checked``,
-``selected``, and ``class_name`` properties; ``append`` (HTML snippets),
-``<=`` (text, elements, or iterables of them), ``+`` and ``*`` (grouping
-elements at the same level), attribute access by subscript
+``selected``, and ``class_name`` properties; ``append`` / ``attach`` /
+``<=`` (elements, strings and numbers, or iterables of them — strings
+and numbers become text nodes, the brython behavior), ``+`` and ``*``
+(grouping elements at the same level), attribute access by subscript
 (``el["id"]``), ``select`` / ``select_one`` / ``get`` / ``closest`` /
 ``index`` / ``inside``, ``clear`` and ``clone``, and the event methods
 (handlers are recorded but never fired — a pure tree has no live DOM),
@@ -105,7 +106,14 @@ class Element:
         self._selected: bool | None = None
         self._events: dict[str, list[Callable[..., Any]]] = {}
         if content is not None:
-            if isinstance(content, (str, Element)):
+            if isinstance(content, str):
+                # The constructor is a kopis convenience (not part of the
+                # brython API): a string is an HTML snippet to parse.
+                # Local import: parser and element need each other at runtime.
+                from .parser import parse_fragment
+
+                self._extend(parse_fragment(content))
+            elif isinstance(content, Element):
                 self.append(content)
             else:
                 self._extend(content)
@@ -219,22 +227,22 @@ class Element:
         return self.attrs[key]
 
     def __setitem__(self, key: str, value: object) -> None:
-        """Set the ``key`` attribute.
+        """Set the ``key`` attribute (the value is stringified).
 
-        Assigning a brython Javascript ``null``/``undefined``
-        (``javascript.NULL`` / ``javascript.UNDEFINED``) removes the
-        element from its parent (the brython behavior).
+        Assigning ``javascript.NULL`` / ``javascript.UNDEFINED`` stores
+        the Javascript strings ``"null"`` / ``"undefined"`` (the brython
+        behavior: the attribute is set, the element is kept).
         """
         # Local import: side-dependent module (the stand-in package under
         # CPython, the built-in module under Brython).
         from javascript import NULL, UNDEFINED
 
-        if value is NULL or value is UNDEFINED:
-            if self.parent is not None:
-                self.parent._nodes.remove(self)
-            self.parent = None
-            return
-        self._set_attr(key, str(value))
+        if value is NULL:
+            self._set_attr(key, "null")
+        elif value is UNDEFINED:
+            self._set_attr(key, "undefined")
+        else:
+            self._set_attr(key, str(value))
 
     def __delitem__(self, key: str) -> None:
         """Remove the ``key`` attribute (``KeyError`` when absent)."""
@@ -252,22 +260,20 @@ class Element:
         child.parent = self
         self._nodes.append(child)
 
-    def append(self, *items: str | Element | _Group | Iterable[object]) -> Element:
-        """Append children, parsing strings as HTML snippets.
+    def append(
+        self, *items: str | float | Element | _Group | Iterable[object]
+    ) -> Element:
+        """Append children (the brython behavior): elements are added
+        as-is, strings and numbers become text nodes, and iterables are
+        added item by item.
 
         Returns ``self`` so calls can be chained.
         """
-        # Local import: parser and element need each other at runtime.
-        from .parser import parse_fragment
-
         for item in items:
             if isinstance(item, Element):
                 self._add_element(item)
-            elif isinstance(item, str):
-                item = item.strip()
-                if not item:
-                    continue
-                self._extend(parse_fragment(item))
+            elif isinstance(item, (str, int, float)):
+                self._append_text(str(item))
             elif isinstance(item, Iterable):
                 self._extend(item)
             else:
@@ -280,8 +286,8 @@ class Element:
         for item in items:
             if isinstance(item, Element):
                 self._add_element(item)
-            elif isinstance(item, str):
-                self._append_text(item)
+            elif isinstance(item, (str, int, float)):
+                self._append_text(str(item))
             else:
                 raise TypeError(
                     f"cannot extend <{self.tag}> with {type(item).__name__}"
@@ -292,8 +298,7 @@ class Element:
         """Append a text node (escaped when serialized)."""
         if self.tag in VOID_TAGS:
             raise ValueError(f"cannot add children to <{self.tag}>")
-        if text:
-            self._nodes.append(text)
+        self._nodes.append(text)
         return self
 
     def clear(self) -> None:
@@ -326,10 +331,11 @@ class Element:
         return copy
 
     def __le__(self, item: object) -> None:
-        """Add a child (Brython's ``<=``): text, an element, or an
-        iterable of them."""
-        if isinstance(item, str):
-            self._append_text(item)
+        """Add a child (Brython's ``<=``, an alias of ``attach``):
+        elements are added as-is, strings and numbers become text
+        nodes, and iterables are added item by item."""
+        if isinstance(item, (str, int, float)):
+            self._append_text(str(item))
         elif isinstance(item, Element):
             self._add_element(item)
         elif isinstance(item, Iterable):

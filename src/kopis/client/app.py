@@ -1,8 +1,8 @@
 """The client-side ``Kopis`` application (Brython, in the browser).
 
 No web server and no root directory: ``k.run()`` and
-``k.add_static_file()`` are no-ops, and ``k.document`` is a live view of
-the browser document. The RPC client half lives here: calls and results
+``k.add_static_file()`` are no-ops, and ``k.document`` is the browser
+document itself (the live DOM, the brython ``browser.document``). The RPC client half lives here: calls and results
 travel both ways over a single WebSocket connection per browser tab
 (``/__kopis__/rpc``), re-opened automatically on disconnect. The
 browser's implicit event loop drives everything; ``aio.run`` starts a
@@ -15,7 +15,6 @@ from typing import Any
 
 from ..common import KopisBase, RpcError, WS_PATH, decode, encode
 from .brython import aio, browser_document, window, websocket
-from .document import Document
 
 __all__ = ["Kopis"]
 
@@ -70,9 +69,10 @@ class Kopis(KopisBase):
         self._connect()
 
     @property
-    def document(self) -> Document:
-        """A live view of the browser document."""
-        return Document(browser_document)
+    def document(self) -> Any:
+        """The browser document (the live DOM; the brython
+        ``browser.document`` object)."""
+        return browser_document
 
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """No-op on the client: files are served by the server."""

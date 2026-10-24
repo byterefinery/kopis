@@ -21,6 +21,7 @@ __all__ = [
     "UNDEFINED",
     "Array",
     "Date",
+    "NullType",
     "RegExp",
     "String",
     "UndefinedType",
@@ -48,29 +49,34 @@ class _JSType:
         return 0
 
 
-class _Null(_JSType):
+class NullType(_JSType):
     """The brython ``javascript.NULL`` value (Javascript ``null``)."""
+
+    def __str__(self) -> str:
+        return "<Javascript null>"
 
     def __repr__(self) -> str:
         return "<Javascript null>"
 
 
-class _Undefined(_JSType):
+class UndefinedType(_JSType):
     """The brython ``javascript.UNDEFINED`` value (Javascript
     ``undefined``)."""
+
+    def __str__(self) -> str:
+        # As in brython, the undefined value has no ``str`` conversion.
+        raise TypeError(
+            "descriptor '__str__' of 'object' object needs an argument"
+        )
 
     def __repr__(self) -> str:
         return "<Javascript undefined>"
 
 
 #: The brython special value for Javascript ``null``.
-NULL = _Null()
+NULL = NullType()
 #: The brython special value for Javascript ``undefined``.
-UNDEFINED = _Undefined()
-#: The brython ``javascript.NullType`` class (alias of :class:`_Null`).
-NullType = _Null
-#: The brython ``javascript.UndefinedType`` class.
-UndefinedType = _Undefined
+UNDEFINED = UndefinedType()
 
 # -- non-essential parts: Magic dummies -----------------------------------
 

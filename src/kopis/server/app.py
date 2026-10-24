@@ -383,20 +383,19 @@ class Kopis(KopisBase):
             </html>
         """
 
-        # The parsed tree is used for the framework's own setup;
-        # the ``k.document`` property is a no-op in brython mode because
-        # the document is built in the browser.
+        # The parsed tree is also where the (server-side) app code runs;
+        # the browser builds the live DOM from the same code.
         doc = self._parse()
 
         with doc.head as el:
+            viewport = dom.Element("meta", name="viewport")
+            viewport["content"] = "width=device-width, initial-scale=1"
+            el.append(viewport)
             el.append(
-                '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                dom.Element("script", type="text/javascript", src=brython_js.name)
             )
             el.append(
-                f'<script type="text/javascript" src="{brython_js.name}"></script>'
-            )
-            el.append(
-                f'<script type="text/javascript" src="{brython_stdlib_js.name}"></script>'
+                dom.Element("script", type="text/javascript", src=brython_stdlib_js.name)
             )
 
         # Attach the running script (the app) as a Brython script, so the
@@ -404,7 +403,7 @@ class Kopis(KopisBase):
         entry = _entry_script()
         if entry is not None and entry.is_file():
             with doc.body as el:
-                el.append(f'<script type="text/python" src="/{entry.name}"></script>')
+                el.append(dom.Element("script", type="text/python", src=f"/{entry.name}"))
 
         # The browser runs the same app code and appends to the live DOM,
         # so the server serves this frozen skeleton; the tree keeps

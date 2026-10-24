@@ -50,14 +50,14 @@ def btn0_click(e: object) -> None:
     aio.run(roundtrip())
 
 
-# k.document.body.append("Hello 4 !")
 k.document <= "Hello 4 !"
 
-with k.document.body as el:
-    el.append('<button id="btn0">Demo</button>')
+btn = k.document.createElement("button")
+btn["id"] = "btn0"
+btn <= "Demo"
+k.document.body <= btn
 
-# k.document["btn0"].addEventListener("click", btn0_click)
-k.document.querySelector("#btn0").addEventListener("click", btn0_click)
+btn.addEventListener("click", btn0_click)
 
 print("k", k)
 k.run()

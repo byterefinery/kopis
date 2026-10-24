@@ -7,12 +7,11 @@ shipped with kopis (``kopis.browser`` and ``kopis.javascript``), which
 unmodified on both sides.
 """
 
-from browser import DOMNode, aio, bind, window, websocket
+from browser import aio, bind, window, websocket
 from browser import document as browser_document
 import javascript
 
 __all__ = [
-    "DOMNode",
     "aio",
     "bind",
     "browser_document",

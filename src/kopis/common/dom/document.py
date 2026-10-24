@@ -6,7 +6,10 @@ A :class:`Document` is a parsed HTML document: its root element
 element ``id`` (``KeyError`` when absent), :meth:`querySelector` /
 :meth:`select` work by CSS selector over the whole document, the
 ``body``, ``head``, and ``title`` properties name the usual elements,
-and ``<=`` appends to the body.
+and ``<=`` appends to the body. The interface mirrors the brython
+``browser.document`` object, so the same code runs on both sides; the
+event handlers bound through it are recorded but never fired (a pure
+tree has no live DOM).
 """
 
 from __future__ import annotations
@@ -68,13 +71,10 @@ class Document:
         """All elements of the document, in document order."""
         return [self.root, *self.root._descendants()]
 
-    def querySelector(self, selector: str) -> Element:
-        """The first element of the document matching ``selector``
-        (``KeyError`` when absent)."""
-        el = self.select_one(selector)
-        if el is None:
-            raise KeyError(f"no element matching {selector!r} in the document")
-        return el
+    def querySelector(self, selector: str) -> Element | None:
+        """The first element of the document matching ``selector``, or
+        ``None`` when absent (the brython behavior)."""
+        return self.select_one(selector)
 
     def querySelectorAll(self, selector: str) -> list[Element]:
         """All elements of the document matching ``selector``, in
@@ -142,16 +142,9 @@ class Document:
         return el
 
     def __setitem__(self, id: str, value: object) -> None:
-        """Assigning a brython Javascript ``null``/``undefined``
-        (``javascript.NULL`` / ``javascript.UNDEFINED``) removes the
-        element (the brython behavior); any other value is ignored (a
-        document has no attributes)."""
-        # Local import: side-dependent module (the stand-in package under
-        # CPython, the built-in module under Brython).
-        from javascript import NULL, UNDEFINED
-
-        if value is NULL or value is UNDEFINED:
-            del self[id]
+        """No-op (the brython behavior): a document has no attributes,
+        so ``document["id"] = value`` does nothing for any ``value``
+        (including ``javascript.NULL`` / ``javascript.UNDEFINED``)."""
 
     def __delitem__(self, id: str) -> None:
         """Remove the element with the given ``id`` (``KeyError`` when
@@ -162,6 +155,51 @@ class Document:
         if el.parent is not None:
             el.parent._nodes.remove(el)
         el.parent = None
+
+    @property
+    def documentElement(self) -> Element:
+        """The document's root element (the brython
+        ``documentElement``)."""
+        return self.root
+
+    @property
+    def forms(self) -> list[Element]:
+        """The document's ``<form>`` elements (the brython ``forms``)."""
+        return [el for el in self._elements() if el.tag == "form"]
+
+    def getElementsByTagName(self, tag: str) -> list[Element]:
+        """All elements with the given tag name, in document order (the
+        brython ``getElementsByTagName``)."""
+        return [el for el in self._elements() if el.tag == tag.lower()]
+
+    def getElementsByClassName(self, name: str) -> list[Element]:
+        """All elements having ``name`` as one of their class names, in
+        document order (the brython ``getElementsByClassName``)."""
+        return [
+            el
+            for el in self._elements()
+            if name in el.attrs.get("class", "").split()
+        ]
+
+    @property
+    def text(self) -> str:
+        """All the text of the document (its ``<body>``), descendants
+        included (the brython ``text``)."""
+        return self.body.text
+
+    @text.setter
+    def text(self, value: str) -> None:
+        self.body.text = value
+
+    @property
+    def html(self) -> str:
+        """The HTML code inside the document (its ``<body>``) (the
+        brython ``html``)."""
+        return self.body.html
+
+    @html.setter
+    def html(self, value: str) -> None:
+        self.body.html = value
 
     def __contains__(self, id: object) -> bool:
         return isinstance(id, str) and self.getElementById(id) is not None

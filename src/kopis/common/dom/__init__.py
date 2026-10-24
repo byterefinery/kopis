@@ -10,8 +10,8 @@ brython's ``browser`` package, so the same application code works (and
 type-checks) on both sides of the web stack: :class:`Document` mirrors
 ``browser.document`` and :class:`Element` mirrors a brython DOM element,
 including the event methods (recorded, never fired — a pure tree has no
-live DOM) and the brython special values (``javascript.NULL`` /
-``UNDEFINED`` remove elements on assignment).
+live DOM) and the handling of the brython special values
+(``javascript.NULL`` / ``UNDEFINED``).
 
 The modules:
 
