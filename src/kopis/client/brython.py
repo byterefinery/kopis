@@ -1,26 +1,15 @@
 """The browser modules that client code works with, under any Python.
 
-``browser`` and ``javascript`` are built-in modules of the Brython
-implementation. Under CPython they do not exist, so stand-ins keep this
-subpackage importable for tooling and type-checking.
+In the browser under Brython these are the built-in ``browser`` and
+``javascript`` modules. Under CPython they are the stand-in packages
+shipped with kopis (``kopis.browser`` and ``kopis.javascript``), which
+:mod:`kopis` aliases to the same top-level names — so this module runs
+unmodified on both sides.
 """
 
-import platform
-
-if platform.python_implementation() == "Brython":
-    from browser import DOMNode, aio, bind, window, websocket
-    from browser import document as browser_document
-    import javascript
-else:
-    from unittest.mock import MagicMock
-
-    DOMNode = MagicMock()
-    aio = MagicMock()
-    bind = MagicMock()
-    browser_document = MagicMock()
-    javascript = MagicMock()
-    websocket = MagicMock()
-    window = MagicMock()
+from browser import DOMNode, aio, bind, window, websocket
+from browser import document as browser_document
+import javascript
 
 __all__ = [
     "DOMNode",

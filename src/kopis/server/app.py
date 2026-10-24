@@ -14,8 +14,16 @@ By default (``use="brython"``), the app runs client-side Python code with
 the ``kopis`` package are served, a default document loading the Brython
 scripts is created, and the running script (the app) is attached to the
 document as a Brython script, so the same application code runs in the
-browser under Brython. In brython mode the document is built in the
-browser, so ``k.document`` is a no-op view on the server.
+browser under Brython. The unified code then works on ``k.document`` the
+same way on both sides: on the server it is the parsed tree of the
+document (a live view of it), which the frozen document served at ``/``
+was built from — the browser builds the live DOM by running the same
+code under Brython, so the server must not serve the content the app
+adds. Event handlers are recorded on the server tree (the brython event
+interface) but never fired: there is no live DOM on the server. The tree
+is also exposed as ``browser.document`` of the stand-in ``browser``
+package, so unified code can use the brython high-level API on both
+sides.
 
 RPC: register a function with ``@k.rpc.register`` (the short way is
 ``@k.register``) to make it callable from the other side as
@@ -38,9 +46,8 @@ import hashlib
 import itertools
 import sys
 import uuid
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
 from aiohttp import web
 from aiohttp_session import Session, get_session, setup
@@ -49,45 +56,6 @@ from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from ..common import KopisBase, WS_PATH, decode, encode, dom
 
 __all__ = ["Kopis"]
-
-
-class _Noop:
-    """A no-op stand-in for the document (and its elements) on the server.
-
-    In brython mode the document is built in the browser, where the same
-    application code runs under Brython. Document operations therefore do
-    nothing on the server (but never fail), so the unified application
-    code can run unmodified on both sides.
-    """
-
-    def append(self, *fragments: str) -> Self:
-        return self
-
-    def addEventListener(self, event: str, handler: Callable[..., Any]) -> Self:
-        return self
-
-    def querySelector(self, selector: str) -> Self:
-        return self
-
-    def __getitem__(self, name: object) -> Self:
-        return self
-
-    def __le__(self, content: object) -> None:
-        return None
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, *exc_info: object) -> None:
-        return None
-
-    def __getattr__(self, name: str) -> Self:
-        # Any attribute (e.g. ``body``, ``head``) resolves to the same
-        # no-op, so chained lookups keep working. Dunder lookups must keep
-        # failing as usual.
-        if name.startswith("_"):
-            raise AttributeError(name)
-        return self
 
 
 def _entry_script() -> Path | None:
@@ -146,7 +114,7 @@ class Kopis(KopisBase):
 
         self._document: str | None = None
         self._tree: dom.Document | None = None
-        self._noop = _Noop()
+        self._served: str | None = None
 
         # RPC state.
         self._instance = uuid.uuid4().hex  # distinguishes call ids across restarts
@@ -180,25 +148,28 @@ class Kopis(KopisBase):
             self._setup_brython()
 
     @property
-    def document(self) -> dom.Document | _Noop:
+    def document(self) -> dom.Document:
         """The parsed HTML document served at ``/`` (a live view of it).
 
-        In brython mode the document is built in the browser (by the same
-        application code running under Brython), so this view is a no-op
-        on the server.
+        In brython mode the browser builds the live DOM by running the
+        same application code under Brython; the server keeps its own
+        copy of the same tree, which the unified code works on
+        identically (event handlers are recorded on it but never fired).
         """
-        if self._brython:
-            return self._noop
         return self._parse()
 
     @document.setter
     def document(self, value: str) -> None:
         self._document = value
         self._tree = None
+        if self._brython:
+            self._served = value
 
     def _parse(self) -> dom.Document:
         """The document parsed with the minimal DOM library, cached until
-        changed."""
+        changed. The tree is also registered as ``browser.document`` of
+        the stand-in ``browser`` package, so unified code can use the
+        brython high-level API on the server as well."""
         if self._tree is None:
             if self._document is None:
                 index = self.root / "index.html"
@@ -206,6 +177,9 @@ class Kopis(KopisBase):
                     raise FileNotFoundError(index)
                 self._document = index.read_text()
             self._tree = dom.parse_html(self._document)
+            import browser  # The stand-in browser package (server side).
+
+            browser.set_document(self._tree)
         return self._tree
 
     # -- RPC ----------------------------------------------------------------
@@ -432,6 +406,11 @@ class Kopis(KopisBase):
             with doc.body as el:
                 el.append(f'<script type="text/python" src="/{entry.name}"></script>')
 
+        # The browser runs the same app code and appends to the live DOM,
+        # so the server serves this frozen skeleton; the tree keeps
+        # growing as the (server-side) app code runs against it.
+        self._served = str(doc)
+
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """Serve a single file at the URL ``path``.
 
@@ -451,13 +430,18 @@ class Kopis(KopisBase):
     async def _serve_document(self, request: web.Request) -> web.Response:
         """Serve the document, rendered as valid HTML.
 
-        The document text is parsed with the minimal DOM library and
-        re-serialized, so the browser always receives a canonical, valid
-        form of the document. The session cookie also identifies the
-        client that loads the document.
+        In brython mode the frozen skeleton is served (the browser runs
+        the same application code and appends to the live DOM); otherwise
+        the live tree is re-serialized with the minimal DOM library, so
+        the client always receives a canonical, valid form of the
+        document. The session cookie also identifies the client that
+        loads the document.
         """
         try:
-            text = str(self._parse())
+            if self._brython and self._served is not None:
+                text = self._served
+            else:
+                text = str(self._parse())
         except FileNotFoundError:
             raise web.HTTPNotFound()
         except dom.ParseError as exc:

@@ -25,6 +25,13 @@ web server on the server and is a no-op on the client). Values exchanged
 between the sides are pickled by the shared ``kopis.common`` package; a
 value that cannot be (de)serialized arrives as a ``Placeholder`` carrying
 the string of the exception.
+
+The brython high-level modules work the same way on both sides: in the
+browser they are the built-in ``browser`` and ``javascript`` modules;
+on the server (below) the stand-in packages :mod:`kopis.browser` and
+:mod:`kopis.javascript` are aliased to the same top-level names, so
+unified code can ``from browser import document, bind`` and
+``import javascript`` unmodified.
 """
 
 import platform
@@ -43,7 +50,16 @@ if platform.python_implementation() == "Brython":
         "javascript",
     ]
 else:
-    # Server side: running on CPython.
+    # Server side: running on CPython. Alias the stand-in packages to the
+    # brython top-level names so unified code imports them unmodified.
+    import sys
+
+    from . import browser as _browser
+    from . import javascript as _javascript
+
+    sys.modules.setdefault("browser", _browser)
+    sys.modules.setdefault("javascript", _javascript)
+
     from .server import Document, Element, Kopis, Placeholder, RpcError, aio, bind
 
     __all__ = ["Document", "Element", "Kopis", "Placeholder", "RpcError", "aio", "bind"]

@@ -2,12 +2,14 @@
 
 :class:`Element` mirrors a brython DOM element (a ``browser`` ``DOMNode``):
 ``tag``, ``attrs``, ``parent``, and the ``html``, ``text``, ``id``,
-``children``, and ``child_nodes`` properties; ``append`` (HTML
-snippets), ``<=`` (text, elements, or iterables of them), ``+`` and ``*``
-(grouping elements at the same level), ``select`` / ``select_one`` /
-``get`` / ``closest`` / ``index`` / ``inside``, ``clear`` and ``clone``,
-the event methods (no-ops on a pure tree), iteration, ``str()`` (the
-prettified tree), and ``repr()``.
+``children``, ``child_nodes``, ``style``, ``value``, ``checked``,
+``selected``, and ``class_name`` properties; ``append`` (HTML snippets),
+``<=`` (text, elements, or iterables of them), ``+`` and ``*`` (grouping
+elements at the same level), attribute access by subscript
+(``el["id"]``), ``select`` / ``select_one`` / ``get`` / ``closest`` /
+``index`` / ``inside``, ``clear`` and ``clone``, and the event methods
+(handlers are recorded but never fired — a pure tree has no live DOM),
+iteration, ``str()`` (the prettified tree), and ``repr()``.
 """
 
 from __future__ import annotations
@@ -97,6 +99,11 @@ class Element:
             self._set_attr(name, value)
         self._nodes: list[Element | str] = []
         self.parent = None
+        self._style: dict[str, str] = {}
+        self._value: str | None = None
+        self._checked: bool | None = None
+        self._selected: bool | None = None
+        self._events: dict[str, list[Callable[..., Any]]] = {}
         if content is not None:
             if isinstance(content, (str, Element)):
                 self.append(content)
@@ -158,6 +165,83 @@ class Element:
         self.clear()
         self._append_text(value)
 
+    @property
+    def style(self) -> dict[str, str]:
+        """The element's style (the brython ``style`` dict, with
+        Javascript property names)."""
+        return self._style
+
+    @style.setter
+    def style(self, value: dict[str, str]) -> None:
+        self._style = dict(value)
+
+    @property
+    def value(self) -> str | None:
+        """The element's value (form elements); ``None`` when unset."""
+        return self._value
+
+    @value.setter
+    def value(self, value: str | None) -> None:
+        self._value = value
+
+    @property
+    def checked(self) -> bool | None:
+        """Whether a checkbox/radio is checked (``None`` when unset)."""
+        return self._checked
+
+    @checked.setter
+    def checked(self, value: bool | None) -> None:
+        self._checked = value
+
+    @property
+    def selected(self) -> bool | None:
+        """Whether an option is selected (``None`` when unset)."""
+        return self._selected
+
+    @selected.setter
+    def selected(self, value: bool | None) -> None:
+        self._selected = value
+
+    @property
+    def class_name(self) -> str:
+        """The ``class`` attribute (the brython ``class_name``; ``""``
+        when absent)."""
+        return self.attrs.get("class", "")
+
+    @class_name.setter
+    def class_name(self, value: str) -> None:
+        self._set_attr("class", value)
+
+    # -- attribute access by subscript ------------------------------------
+
+    def __getitem__(self, key: str) -> str:
+        """The value of the ``key`` attribute (``KeyError`` when absent)."""
+        return self.attrs[key]
+
+    def __setitem__(self, key: str, value: object) -> None:
+        """Set the ``key`` attribute.
+
+        Assigning a brython Javascript ``null``/``undefined``
+        (``javascript.NULL`` / ``javascript.UNDEFINED``) removes the
+        element from its parent (the brython behavior).
+        """
+        # Local import: side-dependent module (the stand-in package under
+        # CPython, the built-in module under Brython).
+        from javascript import NULL, UNDEFINED
+
+        if value is NULL or value is UNDEFINED:
+            if self.parent is not None:
+                self.parent._nodes.remove(self)
+            self.parent = None
+            return
+        self._set_attr(key, str(value))
+
+    def __delitem__(self, key: str) -> None:
+        """Remove the ``key`` attribute (``KeyError`` when absent)."""
+        if key not in self.attrs:
+            raise KeyError(key)
+        del self.attrs[key]
+
     # -- children -------------------------------------------------------
 
     def _add_element(self, child: Element) -> None:
@@ -180,6 +264,9 @@ class Element:
             if isinstance(item, Element):
                 self._add_element(item)
             elif isinstance(item, str):
+                item = item.strip()
+                if not item:
+                    continue
                 self._extend(parse_fragment(item))
             elif isinstance(item, Iterable):
                 self._extend(item)
@@ -217,14 +304,25 @@ class Element:
         self._nodes.clear()
 
     def clone(self) -> Element:
-        """A deep copy of this element and its children (detached)."""
+        """A deep copy of this element and its children (detached), with
+        the bound handlers re-registered on the copy (the brython
+        behavior)."""
         copy = Element(self.tag)
         copy.attrs.update(self.attrs)
+        copy._style.update(self._style)
+        copy._value, copy._checked, copy._selected = (
+            self._value,
+            self._checked,
+            self._selected,
+        )
         for child in self._nodes:
             if isinstance(child, Element):
                 copy._add_element(child.clone())
             else:
                 copy._nodes.append(child)
+        for event, funcs in self._events.items():
+            for func in funcs:
+                copy.bind(event, func)
         return copy
 
     def __le__(self, item: object) -> None:
@@ -276,31 +374,91 @@ class Element:
 
     # -- events -----------------------------------------------------------
     #
-    # A pure tree has no live DOM, so the event methods below are no-ops;
-    # handlers attached through them take effect when the same code runs
-    # in the browser (where ``addEventListener`` is an alias of ``bind``,
-    # exactly as in brython).
+    # A pure tree has no live DOM, so the handlers below are recorded
+    # (and can be listed and removed) but never fired; they take effect
+    # when the same code runs in the browser, where
+    # ``addEventListener`` is an alias of ``bind``, exactly as in
+    # brython.
 
     def bind(
         self,
         event: str,
-        handler: Callable[..., Any] | None = None,
+        func: Callable[..., Any] | None = None,
         options: None | bool | dict[str, Any] = None,
-    ) -> None:
-        """Add an event listener to this element (no-op on the server)."""
-        return None  # noqa: RET501 - an explicit no-op
+    ) -> Self | Callable[[Callable[..., Any]], Self]:
+        """Add an event listener to this element (the brython ``bind``).
 
-    def unbind(self, event: str, handler: Callable[..., Any] | None = None) -> None:
-        """Remove event listeners from this element (no-op on the server)."""
-        return None  # noqa: RET501 - an explicit no-op
+        With ``func`` given the handler is recorded and ``self`` is
+        returned. With ``func`` ``None`` a decorator is returned (the
+        brython ``@bind`` form): it records the decorated function and,
+        as in brython, returns the result of the binding (``self``).
+        """
+        if func is None:
+
+            def decorator(f: Callable[..., Any]) -> Self:
+                self.bind(event, f, options)
+                # As in brython, the decorator returns the result of the
+                # binding, which is the element itself.
+                return self
+
+            return decorator
+        self._events.setdefault(event, []).append(func)
+        return self
+
+    def unbind(
+        self,
+        event: str | None = None,
+        *funcs: Callable[..., Any],
+    ) -> None:
+        """Remove event listeners from this element (the brython
+        ``unbind``).
+
+        Without arguments all handlers are removed; with ``event`` only,
+        all handlers of that event; with ``func``, that handler
+        (``TypeError`` when it is not bound to ``event``).
+        """
+        if event is None:
+            self._events.clear()
+            return
+        handlers = self._events.get(event)
+        if not funcs:
+            self._events.pop(event, None)
+            return
+        for func in funcs:
+            if handlers is None or func not in handlers:
+                raise TypeError(f"missing callback for event {event}")
+            handlers.remove(func)
+        if handlers is not None and not handlers:
+            del self._events[event]
 
     def events(self, event: str) -> list[Callable[..., Any]]:
-        """The handlers bound to ``event`` on this element (always empty
-        on the server)."""
-        return []
+        """The handlers bound to ``event`` on this element (empty when
+        none)."""
+        return list(self._events.get(event, []))
+
+    def bindings(self) -> dict[str, tuple[Callable[..., Any], ...]]:
+        """A map of event name to the handlers bound to it (the brython
+        ``bindings``)."""
+        return {event: tuple(funcs) for event, funcs in self._events.items()}
 
     addEventListener = bind
     removeEventListener = unbind
+
+    def attach(
+        self, other: str | Element | _Group | Iterable[object]
+    ) -> Element:
+        """Append ``other`` as a child (the brython ``attach``; returns
+        ``self`` so calls can be chained)."""
+        return self.append(other)
+
+    def trigger(self, event: str) -> None:
+        """Dispatch ``event`` on this element (no-op on the server: there
+        is no live DOM, and the bound handlers are not called)."""
+        return None  # noqa: RET501 - an explicit no-op
+
+    def reset(self) -> None:
+        """Reset a form (no-op on the server)."""
+        return None  # noqa: RET501 - an explicit no-op
 
     # -- selecting (a small CSS selector subset) -----------------------
 
@@ -315,23 +473,36 @@ class Element:
     def get(
         self,
         *,
-        id: str | None = None,
         name: str | None = None,
         tag: str | None = None,
+        classname: str | None = None,
+        id: str | None = None,
         selector: str | None = None,
     ) -> list[Element]:
         """Descendants matched by one criterion (brython's ``get``).
 
-        ``id`` matches the ``id`` attribute, ``name`` the ``name``
-        attribute, ``tag`` the tag name, and ``selector`` a CSS selector;
-        without a criterion the result is empty.
+        ``name`` matches the ``name`` attribute, ``tag`` the tag name,
+        ``classname`` an element of the ``class`` attribute, ``selector``
+        a CSS selector, and ``id`` the ``id`` attribute searched over
+        the whole document (the brython behavior); without a criterion
+        the result is empty.
         """
         if name is not None:
             return [el for el in self._descendants() if el.attrs.get("name") == name]
         if tag is not None:
             return [el for el in self._descendants() if el.tag == tag.lower()]
+        if classname is not None:
+            return [
+                el
+                for el in self._descendants()
+                if classname in el.attrs.get("class", "").split()
+            ]
         if id is not None:
-            return [el for el in self._descendants() if el.attrs.get("id") == id]
+            root = self
+            while root.parent is not None:
+                root = root.parent
+            elements = [root, *root._descendants()]
+            return [el for el in elements if el.attrs.get("id") == id]
         if selector is not None:
             return self.select(selector)
         return []

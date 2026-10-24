@@ -99,9 +99,10 @@ class Document:
     def get(
         self,
         *,
-        id: str | None = None,
         name: str | None = None,
         tag: str | None = None,
+        classname: str | None = None,
+        id: str | None = None,
         selector: str | None = None,
     ) -> list[Element]:
         """Elements of the document matched by one criterion (brython's
@@ -110,6 +111,12 @@ class Document:
             return [el for el in self._elements() if el.attrs.get("name") == name]
         if tag is not None:
             return [el for el in self._elements() if el.tag == tag.lower()]
+        if classname is not None:
+            return [
+                el
+                for el in self._elements()
+                if classname in el.attrs.get("class", "").split()
+            ]
         if id is not None:
             return [el for el in self._elements() if el.attrs.get("id") == id]
         if selector is not None:
@@ -127,18 +134,24 @@ class Document:
                 return el
         return None
 
-    def append(self, child: Element) -> Element:
-        """Append ``child`` to the document (its ``<body>``); returns
-        ``child``."""
-        self.body._add_element(child)
-        return child
-
     def __getitem__(self, id: str) -> Element:
         """The element with the given ``id`` (``KeyError`` when absent)."""
         el = self.getElementById(id)
         if el is None:
             raise KeyError(f"no element with id {id!r} in the document")
         return el
+
+    def __setitem__(self, id: str, value: object) -> None:
+        """Assigning a brython Javascript ``null``/``undefined``
+        (``javascript.NULL`` / ``javascript.UNDEFINED``) removes the
+        element (the brython behavior); any other value is ignored (a
+        document has no attributes)."""
+        # Local import: side-dependent module (the stand-in package under
+        # CPython, the built-in module under Brython).
+        from javascript import NULL, UNDEFINED
+
+        if value is NULL or value is UNDEFINED:
+            del self[id]
 
     def __delitem__(self, id: str) -> None:
         """Remove the element with the given ``id`` (``KeyError`` when
