@@ -37,6 +37,30 @@ This module extends both, once, by monkey-patching the brython
 
       k.document["btn"]["onclick"] = click      # same as addEventListener
       k["btn"]["onclick"] = click              # k["id"] is k.document["id"]
+- the same, with the attribute syntax ``element.on<event> = func``
+  (e.g. ``element.onclick = func``): it sets the element's native
+  ``on<event>`` handler (as in brython: one handler, readable back, and
+  ``element.on<event> = None`` removes it), except that a coroutine
+  ``func`` is wrapped so that it is started with ``aio.run`` when the
+  event fires — in plain brython it would be called, return a
+  coroutine that is never awaited, and never run::
+
+      k.btn0.onclick = click                    # k.btn0 is k["btn0"]
+      k.document.btn0.onclick = click
+
+  (All of the above are the same operation on the client side, which
+  has the live DOM: the subscripts, the attribute, and ``bind`` /
+  ``addEventListener`` all work as described; on the server they are
+  stand-in no-ops, as with everything else on the document.)
+- ``document.<id>`` gives the element with that id (the attribute way
+  for ``document["<id>"]``, the brython subscript): ``document.btn0``
+  is the element with id ``"btn0"``. ``document`` gets this by being
+  reclassified into a ``DOMNode`` subclass whose ``__getattr__`` falls
+  back to the subscript (the brython ``DOMNode.__getattribute__``
+  cannot be patched from Python, so the subclass is the only way in);
+  a real document property (``document.body``, ``document.title``, ...)
+  still resolves as in brython, and an id with no element raises
+  ``AttributeError``, as in brython.
 
 Nothing else about the DOM changes: ``+`` still groups (a string
 grouped with ``+`` is still a text node), ``del`` still removes, and
@@ -81,6 +105,7 @@ def install() -> None:
     _orig_events = DOMNode.events
     _orig_getitem = DOMNode.__getitem__
     _orig_setitem = DOMNode.__setitem__
+    _orig_setattr = DOMNode.__setattr__
     _orig_unbind = DOMNode.unbind
 
     def attach(self: DOMNode, other: object) -> DOMNode:
@@ -134,10 +159,56 @@ def install() -> None:
                 return handlers[0]
         return _orig_getitem(self, key)
 
+    def setattr(self: DOMNode, attr: str, value: object) -> None:
+        """Set an attribute, as in brython — except that a coroutine
+        function set with an ``on<event>`` attribute (e.g. a
+        ``element.onclick = func`` where ``func`` is ``async def``)
+        is wrapped so that it is started with ``aio.run`` when the
+        event fires: in plain brython it would be called, return a
+        coroutine that is never awaited, and never run. The handler
+        itself is the element's native ``on<event>`` handler, as in
+        brython (one handler; reading it back gives the handler,
+        ``element.on<event> = None`` removes it)."""
+        if _event_name(attr) is not None and iscoroutinefunction(value):
+            target = value
+
+            def wrapped(*args: object, **kwargs: object) -> None:
+                aio.run(target(*args, **kwargs))
+
+            value = wrapped
+        return _orig_setattr(self, attr, value)
+
+    class _Document(DOMNode):
+        """The brython ``document``, with attribute access by element
+        id: ``document.btn0`` is the element with id ``"btn0"`` (the
+        attribute way for ``document["btn0"]``).
+
+        A subclass of ``DOMNode`` whose ``__getattr__`` is consulted
+        only when the ``DOMNode.__getattribute__`` of the base raises
+        ``AttributeError`` (brython combines the two when it builds the
+        class), and that falls back to the subscript — the brython
+        id lookup. A real document property (``body``, ``title``, ...)
+        resolves before ``__getattr__`` is consulted, and an id with no
+        element keeps raising ``AttributeError``.
+        """
+
+        def __getattr__(self, name: str) -> DOMNode:
+            if name.startswith("_"):
+                raise AttributeError(name)
+            try:
+                return _orig_getitem(self, name)
+            except KeyError:
+                raise AttributeError(name)
+
     DOMNode.attach = attach
     DOMNode.__le__ = le
     DOMNode.bind = bind
     DOMNode.addEventListener = bind
     DOMNode.__setitem__ = setitem
     DOMNode.__getitem__ = getitem
+    DOMNode.__setattr__ = setattr
+    # Give document the attribute-by-id access. A plain
+    # ``document.__class__ = _Document`` goes through the patched
+    # ``__setattr__`` above and is lost, so the object protocol is used.
+    object.__setattr__(document, "__class__", _Document)
     DOMNode._kopis_extended = True

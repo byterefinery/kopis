@@ -11,9 +11,11 @@ the two sides do the same way:
   registered with it;
 - the ``k.rpc`` proxy, which calls a function registered on the other
   side (the actual sending of the call is left to :meth:`_rpc_call`);
-  ``k.name(...)`` is the short way for ``k.rpc.name(...)``, and
-  ``k["id"]`` the short way for ``k.document["id"]`` (the element with
-  that id);
+  ``k.name(...)`` is the short way for ``k.rpc.name(...)`` — on the
+  client, which has the live DOM, ``k.name`` first resolves to the
+  element with that id (``k["name"]``) and is the RPC call only if no
+  element has that id — and ``k["id"]`` the short way for
+  ``k.document["id"]`` (the element with that id);
 - :meth:`_dispatch`, which runs a function called by the other side
   and builds the ``result`` or ``error`` part of its payload;
 - :meth:`_settle_result`, which resolves the future of a pending call
@@ -132,9 +134,15 @@ class KopisBase(ABC):
         self._bound[func.__name__] = func  # ty: ignore[unresolved-attribute] - a named function is required
         return func
 
-    def __getattr__(self, name: str) -> Callable[..., Any]:
+    def __getattr__(self, name: str) -> Any:
         """The short way for ``k.rpc.name``: ``k.name(...)`` calls a
         function registered on the other side.
+
+        On the client, :class:`kopis.client.Kopis` refines this: with
+        the live DOM, ``k.name`` first resolves to the element with
+        that id (``k["name"]``), and is the RPC call only if no element
+        has that id. On the server (no live DOM) every name is the RPC
+        call.
 
         Only consulted for names that are not found the usual way, so
         the ``Kopis`` API (``register``, ``rpc``, ``document``, ...)

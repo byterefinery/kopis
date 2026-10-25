@@ -9,7 +9,8 @@ class Point:
     pickled and arrive on the other side as real ``Point`` objects."""
 
     def __init__(self, x: int, y: int) -> None:
-        self.x, self.y = x, y
+        self.x = x
+        self.y = y
 
     def __repr__(self) -> str:
         return f"Point({self.x}, {self.y})"
@@ -49,6 +50,7 @@ k.document.body.attach("""
 """)
 
 
-k["btn0"]["onclick"] = btn0_click
-print("k", k)
+# k["btn0"]["onclick"] = btn0_click
+k.btn0.onclick = btn0_click
+
 k.run()

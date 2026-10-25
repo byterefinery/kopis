@@ -101,6 +101,29 @@ class Kopis(KopisBase):
         ``browser.document`` object)."""
         return document
 
+    def __getattr__(self, name: str) -> Any:
+        """The element of the document with that id, or — if no element
+        has that id — the short way for ``k.rpc.name``.
+
+        ``k.btn0`` is the element with id ``"btn0"`` (the same as
+        ``k["btn0"]`` / ``k.document["btn0"]``); if no element has that
+        id, ``k.name`` calls a function registered on the other side
+        (the server), as in the base class. The client is the side with
+        the live DOM, so element ids take precedence over RPC names
+        (the server has no live DOM and resolves every name to the RPC
+        call, where it stays a stand-in no-op).
+
+        Only consulted for names that are not found the usual way, so
+        the ``Kopis`` API (``register``, ``rpc``, ``document``, ...)
+        is unaffected.
+        """
+        if name.startswith("_") or name == "rpc":
+            raise AttributeError(name)
+        try:
+            return self.document[name]
+        except KeyError:
+            return super().__getattr__(name)
+
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """No-op on the client: files are served by the server."""
 
