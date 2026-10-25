@@ -221,7 +221,7 @@ class KopisBase(ABC):
         sent.
         """
 
-    def _apply_op(
+    async def _apply_op(
         self,
         handle: RPCHandle,
         op: str,
@@ -232,9 +232,11 @@ class KopisBase(ABC):
         """Apply ``op`` to the live object behind ``handle`` (this side
         owns it), and return its result.
 
-        The owner side decides whether the op can be performed: any
-        failure raises, and is reported to the other side as the error
-        of the op's result.
+        A ``call`` whose result is a coroutine is awaited, so a
+        coroutine method of the live object works over a handle the
+        same way it does locally. The owner side decides whether the
+        op can be performed: any failure raises, and is reported to the
+        other side as the error of the op's result.
         """
         obj = self._handles.get(handle._id)
         if obj is None:
@@ -245,8 +247,12 @@ class KopisBase(ABC):
             return getattr(obj, name)
         if op == "call":
             if name is None:
-                return obj(*args, **kwargs)
-            return getattr(obj, name)(*args, **kwargs)
+                result = obj(*args, **kwargs)
+            else:
+                result = getattr(obj, name)(*args, **kwargs)
+            if iscoroutine(result):
+                result = await result
+            return result
         if op == "getitem":
             return obj[args[0]]
         if op == "setitem":
@@ -263,6 +269,31 @@ class KopisBase(ABC):
         if op == "iter":
             return list(obj)
         raise ValueError(f"unknown RPCHandle op {op!r}")
+
+    async def _local_op(
+        self,
+        future: Any,
+        handle: RPCHandle,
+        op: str,
+        name: str | None,
+        args: Sequence[object],
+        kwargs: Mapping[str, object],
+    ) -> None:
+        """Apply ``op`` of ``handle`` on this side (which owns the live
+        object) and settle ``future`` with its result.
+
+        A failure of the op is settled on ``future`` as an
+        :class:`~kopis.common.RpcError` (the owner decides whether the
+        op can be performed).
+        """
+        try:
+            result = await self._apply_op(handle, op, name, args, kwargs)
+        except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
+            if not future.done():
+                future.set_exception(RpcError(type(exc).__name__, str(exc)))
+        else:
+            if not future.done():
+                future.set_result(result)
 
     @abstractmethod
     async def _rpc_call(

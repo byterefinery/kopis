@@ -304,7 +304,7 @@ class Kopis(KopisBase):
         if done is None:
             payload: dict[str, Any] = {"type": "result", "id": call_id}
             if msg.get("type") == "op":
-                payload.update(self._dispatch_op(msg))
+                payload.update(await self._dispatch_op(msg))
             else:
                 payload.update(
                     await self._dispatch(
@@ -331,7 +331,7 @@ class Kopis(KopisBase):
             # Re-send the stored result instead of running it again.
             self._send(done)
 
-    def _dispatch_op(self, msg: dict[str, Any]) -> dict[str, Any]:
+    async def _dispatch_op(self, msg: dict[str, Any]) -> dict[str, Any]:
         """Run an op the server sent for a handle this side owns, and
         build the ``result`` or ``error`` part of its payload."""
         handle = msg.get("handle")
@@ -347,7 +347,7 @@ class Kopis(KopisBase):
                 }
             }
         try:
-            result = self._apply_op(
+            result = await self._apply_op(
                 handle,
                 msg.get("op", ""),
                 msg.get("name"),
@@ -382,10 +382,7 @@ class Kopis(KopisBase):
             kwargs = {}
         if handle._owner_side == self.side and handle._owner_id == self._client_id:
             fut = aio.Future()
-            try:
-                fut.set_result(self._apply_op(handle, op, name, args, kwargs))
-            except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
-                fut.set_exception(RpcError(type(exc).__name__, str(exc)))
+            aio.run(self._local_op(fut, handle, op, name, args, kwargs))
             return fut
         call_id = next(self._next_id)
         self._send(

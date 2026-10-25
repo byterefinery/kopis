@@ -701,7 +701,7 @@ class Kopis(KopisBase):
                 }
                 return payload
             try:
-                payload["result"] = self._apply_op(
+                payload["result"] = await self._apply_op(
                     handle,
                     msg.get("op", ""),
                     msg.get("name"),
@@ -738,10 +738,9 @@ class Kopis(KopisBase):
             kwargs = {}
         if handle._owner_side == self.side:
             future = asyncio.get_running_loop().create_future()
-            try:
-                future.set_result(self._apply_op(handle, op, name, args, kwargs))
-            except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
-                future.set_exception(RpcError(type(exc).__name__, str(exc)))
+            asyncio.ensure_future(
+                self._local_op(future, handle, op, name, args, kwargs)
+            )
             return future
         owner_id = handle._owner_id
         if owner_id is None:
