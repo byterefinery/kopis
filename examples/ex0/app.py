@@ -16,7 +16,9 @@ class Point:
 
 
 @k.rpc.register
-async def server_button_click(name: str, e: RPCHandle, point: Point) -> object:
+async def server_button_click(
+    name: str, e: RPCHandle, point: RPCHandle[Point]
+) -> object:
     print("server_button_click", e, point)
 
     v = await k.rpc.client_button_click(name, e, point)
@@ -26,7 +28,7 @@ async def server_button_click(name: str, e: RPCHandle, point: Point) -> object:
 
 # short way (k.rpc.register is the canonical way)
 @k.register
-async def client_button_click(name: str, e: RPCHandle, point: Point) -> int:
+async def client_button_click(name: str, e: RPCHandle, point: RPCHandle[Point]) -> int:
     # Called by the server. `e` is the same RPCHandle: the live event
     # is in this tab, so it prints as "local", and operations on it
     # run here, with no round trip. `point` is a real Point object (the
@@ -40,7 +42,7 @@ async def btn0_click(e: object) -> None:
 
     # short way for k.rpc.server_button_click(...)
     point = Point(3, 4)
-    v = await k.server_button_click("btn0_click", e, point)
+    v = await k.server_button_click("btn0_click", e, k.get_handle(point))
 
     print("btn0_click result:", v)
     k.document.body.attach(f"\n{v!s}")

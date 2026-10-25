@@ -144,7 +144,7 @@ class _AsyncList:
         return item
 
 
-class RPCHandle:
+class RPCHandle[T]:
     """A stand-in for a live object that does not travel.
 
     The live object stays on the side that owns it (``owner_side``, and
@@ -157,6 +157,11 @@ class RPCHandle:
     came from the other side — without a round trip. ``reason`` is the
     string of the exception that made the value unserializable
     (``None`` for an explicit handle).
+
+    The type parameter is optional and documents only: it names the
+    type of the live object the handle points at (``RPCHandle[Point]``),
+    while the bare ``RPCHandle`` is a handle to any object. It is not
+    checked at runtime.
 
     The handle's own state is private (``_id``, ``_owner_side``,
     ``_owner_id``, ``_true_repr``, ``_reason``), so it never shadows an
