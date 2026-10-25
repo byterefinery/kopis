@@ -24,13 +24,13 @@ rendered or fired.
 from . import aio, javascript
 from .app import Kopis
 from .browser import DOMEvent, DOMNode, ajax, bind, document, html, timer, window
-from ..common import Placeholder, RpcError
+from ..common import RPCHandle, RpcError
 
 __all__ = [
     "DOMEvent",
     "DOMNode",
     "Kopis",
-    "Placeholder",
+    "RPCHandle",
     "RpcError",
     "aio",
     "ajax",

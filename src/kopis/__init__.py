@@ -26,8 +26,9 @@ server it is a stand-in of the brython ``browser.document`` object,
 because the server has no live DOM and never parses the HTML it serves
 — the browser does that for it, in the brython way. Values exchanged
 between the sides are pickled by the shared ``kopis.common`` package; a
-value that cannot be (de)serialized arrives as a ``Placeholder``
-carrying the string of the exception.
+value that cannot be (de)serialized stays alive on the side where it is,
+and arrives as an ``RPCHandle`` through which the other side operates
+on the live object.
 
 Developers import the brython objects from ``kopis``, never from
 ``browser`` or ``javascript`` directly: the names above are the unified
@@ -41,7 +42,7 @@ __all__ = [
     "DOMEvent",
     "DOMNode",
     "Kopis",
-    "Placeholder",
+    "RPCHandle",
     "RpcError",
     "aio",
     "ajax",
@@ -58,7 +59,7 @@ if platform.python_implementation() == "Brython":
     # built-ins are re-exported under the unified names.
     from .client import (
         Kopis,
-        Placeholder,
+        RPCHandle,
         RpcError,
         aio,
         ajax,
@@ -76,7 +77,7 @@ else:
     # objects are re-exported under the same unified names.
     from .server import (
         Kopis,
-        Placeholder,
+        RPCHandle,
         RpcError,
         aio,
         ajax,

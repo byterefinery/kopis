@@ -41,14 +41,17 @@ collide; the cookie identity remains as a fallback for clients that
 don't announce one), and all exchanged data is JSON: the values of
 ``args``, ``kwargs``, and ``result`` are pickled
 Python objects (base64-encoded in the JSON), and a value that cannot be
-(de)serialized arrives as a ``Placeholder`` carrying the string of the
-exception.
+unpickled) does not travel: it stays alive on the side where it is,
+and an ``RPCHandle`` pointing at it arrives instead — a magic type
+through which the other side operates on the live object (the owner
+side applies each operation, and decides whether it can be performed).
 """
 
 import asyncio
 import contextvars
 import hashlib
 import itertools
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -58,7 +61,7 @@ from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 
-from ..common import KopisBase, WS_PATH, decode, encode
+from ..common import KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
 from . import browser
 
 __all__ = ["Kopis"]
@@ -121,6 +124,7 @@ class Kopis(KopisBase):
     #: The document created when the root has no ``index.html`` and
     #: ``k.document`` is never assigned (brython mode).
     _DEFAULT_DOCUMENT = """\
+<!DOCTYPE html>
 <html>
     <head>
         <meta charset="utf-8">
@@ -154,6 +158,9 @@ class Kopis(KopisBase):
         self._instance = uuid.uuid4().hex  # distinguishes call ids across restarts
         self._pending_calls: dict[str, list[dict[str, Any]]] = {}
         self._pending_results: dict[int, asyncio.Future] = {}
+        self._relay: dict[
+            int, tuple[str, Any]
+        ] = {}  # relayed op id -> (sender client, its id)
         self._streams: dict[str, _Stream] = {}
         self._next_call_id = itertools.count(1)
         self._current_client: contextvars.ContextVar[str | None] = (
@@ -449,15 +456,14 @@ class Kopis(KopisBase):
                 pass
         return ws
 
-    @staticmethod
-    async def _ws_send(stream: _Stream) -> None:
+    async def _ws_send(self, stream: _Stream) -> None:
         """Send queued messages to the client until the connection ends."""
         try:
             while True:
                 message = await stream.queue.get()
                 if message is None:
                     return
-                await stream.ws.send_str(encode(message))
+                await stream.ws.send_str(encode(message, self._make_handle))
         except Exception:  # noqa: BLE001, S110 - a dead connection just ends the sender
             # Queued calls remain pending and are replayed on reconnect.
             pass
@@ -465,13 +471,16 @@ class Kopis(KopisBase):
     def _handle_message(self, client_id: str, text: str) -> None:
         """Dispatch a message received from a client."""
         try:
-            msg = decode(text)
-        except Exception:  # noqa: BLE001 - a bad message simply cannot be routed
+            msg = decode(text, self)
+        except Exception as exc:  # noqa: BLE001 - the values cannot be restored; report it
+            self._report_bad_message(client_id, text, exc)
             return
         if not isinstance(msg, dict):
             return
         if msg.get("type") == "call":
             asyncio.ensure_future(self._run_client_call(client_id, msg))
+        elif msg.get("type") == "op":
+            self._route_op(client_id, msg)
         elif msg.get("type") == "result":
             self._resolve_result(client_id, msg)
 
@@ -495,15 +504,152 @@ class Kopis(KopisBase):
         if stream is not None:
             stream.push(message)
 
+    def _route_op(self, client_id: str, msg: dict[str, Any]) -> None:
+        """Run an op for a handle this side owns, or relay it to the
+        client that owns the handle."""
+        handle = msg.get("handle")
+        if not isinstance(handle, RPCHandle):
+            self._send_to(
+                client_id,
+                {
+                    "type": "result",
+                    "id": msg.get("id"),
+                    "error": {
+                        "type": "TypeError",
+                        "message": "bad op message: no handle",
+                    },
+                },
+            )
+            return
+        if handle._owner_side == self.side:
+            asyncio.ensure_future(self._run_client_op(client_id, msg))
+            return
+        owner_id = handle._owner_id
+        if owner_id is None:
+            self._send_to(
+                client_id,
+                {
+                    "type": "result",
+                    "id": msg.get("id"),
+                    "error": {
+                        "type": "ValueError",
+                        "message": f"bad handle: {handle!r}",
+                    },
+                },
+            )
+            return
+        # The handle's live object is in another client: relay the op
+        # there (with a fresh id), and route its result back to the
+        # sender.
+        relay_id = next(self._next_call_id)
+        self._relay[relay_id] = (client_id, msg.get("id"))
+        relayed = {**msg, "id": relay_id}
+        self._pending_calls.setdefault(owner_id, []).append(relayed)
+        self._send_to(owner_id, relayed)
+
+    async def _run_client_op(self, client_id: str, msg: dict[str, Any]) -> None:
+        """Run an op the client sent for a handle this side owns, and
+        send the result."""
+        handle = msg.get("handle")
+        payload: dict[str, Any] = {"type": "result", "id": msg.get("id")}
+        if not isinstance(handle, RPCHandle):
+            payload["error"] = {
+                "type": "TypeError",
+                "message": f"bad op message: no handle: {handle!r}",
+            }
+            self._send_to(client_id, payload)
+            return
+        try:
+            payload["result"] = self._apply_op(
+                handle,
+                msg.get("op", ""),
+                msg.get("name"),
+                msg.get("args", []),
+                msg.get("kwargs", {}),
+            )
+        except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
+            payload["error"] = {"type": type(exc).__name__, "message": str(exc)}
+        self._send_to(client_id, payload)
+
+    def _handle_op(
+        self,
+        handle: RPCHandle,
+        op: str,
+        name: str | None = None,
+        args: tuple[object, ...] = (),
+        kwargs: dict[str, object] | None = None,
+    ) -> asyncio.Future:
+        """Perform ``op`` of ``handle`` and return a future of its
+        result.
+
+        If the live object is on this side (the server owns the
+        handle), the op is applied locally, and the future is settled
+        with the (live) result itself. Otherwise the op is queued and
+        sent to the client that owns the handle, like a call, and the
+        future is settled by its ``result`` — or with an
+        :class:`~kopis.common.RpcError` if the client could not perform
+        the op.
+        """
+        if kwargs is None:
+            kwargs = {}
+        if handle._owner_side == self.side:
+            future = asyncio.get_running_loop().create_future()
+            try:
+                future.set_result(self._apply_op(handle, op, name, args, kwargs))
+            except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
+                future.set_exception(RpcError(type(exc).__name__, str(exc)))
+            return future
+        owner_id = handle._owner_id
+        if owner_id is None:
+            # A client-owned handle always carries the client's id.
+            future = asyncio.get_running_loop().create_future()
+            future.set_exception(RpcError("ValueError", f"bad handle: {handle!r}"))
+            return future
+        call_id = next(self._next_call_id)
+        message: dict[str, Any] = {
+            "type": "op",
+            "id": call_id,
+            "instance": self._instance,
+            "handle": handle,
+            "op": op,
+            "name": name,
+            "args": list(args),
+            "kwargs": kwargs,
+        }
+        self._pending_calls.setdefault(owner_id, []).append(message)
+        future = asyncio.get_running_loop().create_future()
+        self._pending_results[call_id] = future
+        self._send_to(owner_id, message)
+        return future
+
+    def _report_bad_message(self, client_id: str, text: str, exc: Exception) -> None:
+        """Reply with the error to a message whose pickled values could
+        not be restored on this side."""
+        try:
+            raw = json.loads(text)
+        except Exception:  # noqa: BLE001 - not even a JSON message
+            return
+        if isinstance(raw, dict) and raw.get("type") in ("call", "op") and "id" in raw:
+            self._send_to(
+                client_id,
+                {
+                    "type": "result",
+                    "id": raw["id"],
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                },
+            )
+
     def _resolve_result(self, client_id: str, msg: dict[str, Any]) -> None:
-        """Resolve the future of a client call from its result.
+        """Resolve the future of a client call from its result, or route
+        the result of a relayed op back to the client that sent the op.
 
         Duplicates (a lost round trip) are ignored, so the client can
         safely re-send results.
         """
         call_id = msg.get("id")
         future = self._pending_results.pop(call_id, None)
-        if future is None or future.done():
+        origin = self._relay.pop(call_id, None)
+        if future is None and origin is None:
             return
         calls = self._pending_calls.get(client_id)
         if calls is not None:
@@ -512,7 +658,10 @@ class Kopis(KopisBase):
                 self._pending_calls[client_id] = calls
             else:
                 del self._pending_calls[client_id]
-        self._settle_result(future, msg)
+        if future is not None and not future.done():
+            self._settle_result(future, msg)
+        elif origin is not None:
+            self._send_to(origin[0], {**msg, "id": origin[1]})
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
         web.run_app(self.app, host=host, port=port)

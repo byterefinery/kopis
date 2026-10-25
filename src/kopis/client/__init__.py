@@ -34,13 +34,13 @@ import javascript
 
 from .app import Kopis
 from .dom import install as _install_dom
-from ..common import Placeholder, RpcError
+from ..common import RPCHandle, RpcError
 
 __all__ = [
     "DOMEvent",
     "DOMNode",
     "Kopis",
-    "Placeholder",
+    "RPCHandle",
     "RpcError",
     "aio",
     "ajax",

@@ -10,13 +10,14 @@ coroutine without blocking.
 """
 
 import itertools
+import json
 import uuid
 from pathlib import Path
 from typing import Any
 
 from browser import DOMNode, aio, document, window, websocket
 
-from ..common import KopisBase, RpcError, WS_PATH, decode, encode
+from ..common import KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
 from .parser import parse_html
 
 __all__ = ["Kopis"]
@@ -51,7 +52,9 @@ class Kopis(KopisBase):
     :meth:`run` starts the web server, and in the browser, where it is a
     no-op). Values passed between the sides are pickled, so objects are
     restored on the other end as long as their type exists there; anything
-    else arrives as a :class:`~kopis.common.Placeholder`::
+    else stays alive on its side, and arrives as an
+    :class:`~kopis.common.RPCHandle`, through which the other side
+    operates on the live object::
 
         from kopis import Kopis
         k = Kopis()
@@ -78,6 +81,7 @@ class Kopis(KopisBase):
         self._outbox: list[dict[str, Any]] = []  # messages waiting for the connection
         self._next_id = itertools.count(1)
         self._client_id = _client_id()  # this tab's identity on the server
+        self._owner_id = self._client_id  # this tab's identity in the handles it makes
         self._ws: Any = None
         self._open = False
         self._closed_by_user = False
@@ -148,7 +152,7 @@ class Kopis(KopisBase):
             self._open = True
             # Send anything that was queued while the connection was down.
             for message in self._outbox:
-                ws.send(encode(message))
+                ws.send(encode(message, self._make_handle))
             self._outbox.clear()
 
         def on_message(event: Any) -> None:
@@ -180,7 +184,7 @@ class Kopis(KopisBase):
         """Send a message, or queue it until the connection is open again."""
         if self._open and self._ws is not None:
             try:
-                self._ws.send(encode(message))
+                self._ws.send(encode(message, self._make_handle))
                 return
             except Exception as exc:  # noqa: BLE001 - the socket is dying; queue it
                 print("kopis: send failed:", exc)
@@ -189,32 +193,52 @@ class Kopis(KopisBase):
     def _handle_message(self, event: Any) -> None:
         """Handle a message received from the server."""
         try:
-            msg = decode(str(event.data))
-        except Exception:  # noqa: BLE001 - a bad message must not kill the connection
+            msg = decode(str(event.data), self)
+        except Exception as exc:  # noqa: BLE001 - a bad message must not kill the connection
+            self._report_bad_message(str(event.data), exc)
             return
         if not isinstance(msg, dict):
             return
-        if msg.get("type") == "call":
-            aio.run(self._run_call(msg))
+        if msg.get("type") in ("call", "op"):
+            aio.run(self._run_request(msg))
         elif msg.get("type") == "result":
             fut = self._pending.pop(msg.get("id"), None)
             if fut is not None:
                 self._settle_result(fut, msg)
 
-    async def _run_call(self, call: dict[str, Any]) -> None:
-        """Run a client function called by the server and send the result."""
-        call_id = call["id"]
+    def _report_bad_message(self, text: str, exc: Exception) -> None:
+        """Reply with the error to a message whose pickled values could
+        not be restored on this side."""
+        try:
+            raw = json.loads(text)
+        except Exception:  # noqa: BLE001 - not even a JSON message
+            return
+        if isinstance(raw, dict) and raw.get("type") in ("call", "op") and "id" in raw:
+            self._send(
+                {
+                    "type": "result",
+                    "id": raw["id"],
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                }
+            )
+
+    async def _run_request(self, msg: dict[str, Any]) -> None:
+        """Run a call or op sent by the server and send the result."""
+        call_id = msg["id"]
         # Call ids restart after a server restart, so they are remembered
         # together with the server instance that issued them.
-        key = (call.get("instance", ""), call_id)
+        key = (msg.get("instance", ""), call_id)
         done = self._done.get(key)
         if done is None:
             payload: dict[str, Any] = {"type": "result", "id": call_id}
-            payload.update(
-                await self._dispatch(
-                    call.get("method"), call.get("args", []), call.get("kwargs", {})
+            if msg.get("type") == "op":
+                payload.update(self._dispatch_op(msg))
+            else:
+                payload.update(
+                    await self._dispatch(
+                        msg.get("method"), msg.get("args", []), msg.get("kwargs", {})
+                    )
                 )
-            )
             self._done[key] = payload
             while len(self._done) > _DONE_CAP:
                 del self._done[next(iter(self._done))]
@@ -224,6 +248,77 @@ class Kopis(KopisBase):
             # Re-send the stored result instead of running it again.
             payload = done
         self._send(payload)
+
+    def _dispatch_op(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Run an op the server sent for a handle this side owns, and
+        build the ``result`` or ``error`` part of its payload."""
+        handle = msg.get("handle")
+        if (
+            not isinstance(handle, RPCHandle)
+            or handle._owner_side != self.side
+            or handle._owner_id != self._client_id
+        ):
+            return {
+                "error": {
+                    "type": "LookupError",
+                    "message": f"op for a handle this client does not own: {handle!r}",
+                }
+            }
+        try:
+            result = self._apply_op(
+                handle,
+                msg.get("op", ""),
+                msg.get("name"),
+                msg.get("args", []),
+                msg.get("kwargs", {}),
+            )
+            return {"result": result}
+        except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
+            return {"error": {"type": type(exc).__name__, "message": str(exc)}}
+
+    def _handle_op(
+        self,
+        handle: RPCHandle,
+        op: str,
+        name: str | None = None,
+        args: tuple[object, ...] = (),
+        kwargs: dict[str, object] | None = None,
+    ) -> Any:
+        """Perform ``op`` of ``handle`` and return a future of its
+        result.
+
+        If the live object is in this tab (the client owns the handle),
+        the op is applied locally, and the future is settled with the
+        (live) result itself. Otherwise the op is sent to the server —
+        which owns the object, or relays the op to the tab that does —
+        and the future is settled by its ``result`` — or with an
+        :class:`~kopis.common.RpcError` if the owner could not perform
+        the op.
+        """
+        if kwargs is None:
+            kwargs = {}
+        if handle._owner_side == self.side and handle._owner_id == self._client_id:
+            fut = aio.Future()
+            try:
+                fut.set_result(self._apply_op(handle, op, name, args, kwargs))
+            except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
+                fut.set_exception(RpcError(type(exc).__name__, str(exc)))
+            return fut
+        call_id = next(self._next_id)
+        fut = aio.Future()
+        self._pending[call_id] = fut
+        self._send(
+            {
+                "type": "op",
+                "id": call_id,
+                "handle": handle,
+                "op": op,
+                "name": name,
+                "args": list(args),
+                "kwargs": kwargs,
+            }
+        )
+        return fut
 
     async def _reconnect(self) -> None:
         await aio.sleep(_RETRY_DELAY)

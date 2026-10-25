@@ -17,15 +17,20 @@ the two sides do the same way:
 - :meth:`_dispatch`, which runs a function called by the other side
   and builds the ``result`` or ``error`` part of its payload;
 - :meth:`_settle_result`, which resolves the future of a pending call
-  from its ``result`` message.
+  from its ``result`` message;
+- the registry of live objects this side keeps for values it could not
+  serialize (:attr:`_handles`), and the ``RPCHandle``s that stand in
+  for them on the other side (:meth:`_make_handle`, :meth:`_apply_op`).
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from inspect import iscoroutine
+from itertools import count
 from pathlib import Path
 from typing import Any
 
+from .handle import RPCHandle
 from .wire import RpcError
 
 __all__ = ["KopisBase"]
@@ -87,6 +92,14 @@ class KopisBase(ABC):
         self.use = use
         self._bound: dict[str, Callable[..., Any]] = {}
         self.rpc = _Rpc(self)
+        # The live objects this side keeps for values it could not
+        # serialize, and the handles that stand in for them on the
+        # other side.
+        self._handles: dict[int, Any] = {}
+        self._next_handle_id = count(1)
+        self._owner_id: str | None = (
+            None  # this side's identity in the handles it makes
+        )
 
     # -- unified API ------------------------------------------------------
 
@@ -147,6 +160,80 @@ class KopisBase(ABC):
         """Start the web server (server side); no-op on the client side."""
 
     # -- RPC ----------------------------------------------------------------
+
+    def _make_handle(self, value: Any, reason: str) -> RPCHandle:
+        """Keep ``value`` alive on this side and return its ``RPCHandle``.
+
+        Called by :func:`~kopis.common.wire.encode` (as its ``maker``)
+        when ``value`` cannot be pickled: the value stays in
+        :attr:`_handles`, and the handle — which carries this side's
+        identity — is what is sent to the other side.
+        """
+        handle_id = next(self._next_handle_id)
+        self._handles[handle_id] = value
+        return RPCHandle(handle_id, self.side, self._owner_id, reason)
+
+    @abstractmethod
+    def _handle_op(
+        self,
+        handle: RPCHandle,
+        op: str,
+        name: str | None = None,
+        args: tuple[object, ...] = (),
+        kwargs: dict[str, object] | None = None,
+    ) -> Any:
+        """Perform ``op`` of ``handle`` and return a future of its
+        result.
+
+        If this side owns the live object, the op is applied here, and
+        the future is settled with the (live) result itself; otherwise
+        the op is sent to the owner, and the future is settled by its
+        ``result`` message — with an :class:`~kopis.common.RpcError` if
+        the owner could not perform the op.
+        """
+
+    def _apply_op(
+        self,
+        handle: RPCHandle,
+        op: str,
+        name: str | None,
+        args: Sequence[object],
+        kwargs: Mapping[str, object],
+    ) -> Any:
+        """Apply ``op`` to the live object behind ``handle`` (this side
+        owns it), and return its result.
+
+        The owner side decides whether the op can be performed: any
+        failure raises, and is reported to the other side as the error
+        of the op's result.
+        """
+        obj = self._handles.get(handle._id)
+        if obj is None:
+            raise LookupError(f"no live object behind {handle!r}")
+        if op == "getattr":
+            if name is None:
+                raise ValueError("getattr op requires a name")
+            return getattr(obj, name)
+        if op == "call":
+            if name is None:
+                return obj(*args, **kwargs)
+            return getattr(obj, name)(*args, **kwargs)
+        if op == "getitem":
+            return obj[args[0]]
+        if op == "setitem":
+            obj[args[0]] = args[1]
+            return None
+        if op == "delitem":
+            del obj[args[0]]
+            return None
+        if op == "setattr":
+            if name is None:
+                raise ValueError("setattr op requires a name")
+            setattr(obj, name, args[0])
+            return None
+        if op == "iter":
+            return list(obj)
+        raise ValueError(f"unknown RPCHandle op {op!r}")
 
     @abstractmethod
     async def _rpc_call(

@@ -1,4 +1,4 @@
-from kopis import Kopis, Placeholder
+from kopis import Kopis, RPCHandle
 
 
 k = Kopis()
@@ -16,27 +16,45 @@ class Point:
 
 
 @k.rpc.register
-async def server_button_click(name: str, e: object, point: Point) -> object:
+async def server_button_click(name: str, e: RPCHandle, point: Point) -> object:
     # Called by the client. `point` arrives as a real Point object (the
     # same class exists on both sides). `e` is a DOM event, which cannot
-    # be pickled in the browser, so it arrives as a Placeholder carrying
-    # the exception string. Inside this registered function, k.rpc
-    # targets the client that called us.
+    # be pickled in the browser: the event stays alive in the browser,
+    # and an RPCHandle pointing at it arrives here instead.
     print("server_button_click", e, point)
 
-    if isinstance(e, Placeholder):
-        print("server_button_click: e could not be deserialized:", e.error)
+    if isinstance(e, RPCHandle):
+        print("server_button_click: e is an RPCHandle of the client's live event")
 
-    v = await k.rpc.client_button_click(name, point)
+    # Operations on the handle are sent to the browser, where the live
+    # event performs them and the result comes back.
+    print("event type:", await e.type)
+    target = await e.target  # the live button element: another handle
+    print("target:", target)
+    print("target id:", await target.id)
+
+    # Mutations are fire and forget: the owner applies them to the live
+    # object, and no result comes back.
+    target["data-kopis"] = "visited"
+
+    # Methods work the same way: the live object is called there, and
+    # the result comes back.
+    print("has data-kopis:", await target.hasAttribute("data-kopis"))
+
+    # The handle can be sent on, in either direction: this one goes back
+    # to the client (where the live event still is).
+    v = await k.rpc.client_button_click(name, point, e)
     print("server_button_click", v)
     return v
 
 
 # short way (k.rpc.register is the canonical way)
 @k.register
-async def client_button_click(name: str, point: Point) -> int:
-    # Called by the server; `point` is a real Point object.
-    print("client_button_click", name, point)
+async def client_button_click(name: str, point: Point, e: RPCHandle) -> int:
+    # Called by the server; `point` is a real Point object, and `e` is
+    # the same RPCHandle: the live event is in this tab, so operations
+    # on it run here, with no round trip.
+    print("client_button_click", name, point, await e.type)
     return 29
 
 
