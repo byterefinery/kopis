@@ -1,10 +1,10 @@
 """``RPCHandle`` — a stand-in for a live object on the other side.
 
-A value that cannot be serialized — pickled on the sender side, or
-unpickled on the receiver side — does not travel: it stays alive where
-it is, and an :class:`RPCHandle` pointing at it is sent instead. The
-wrap is ``Kopis.handle``; ``Kopis.get_handle`` makes an explicit handle
-to any object (picklable or not) for sending. Handles travel freely
+A value that cannot be serialized does not travel, and sending it
+raises — the developer wraps the value in an :class:`RPCHandle`
+instead: the wrap is ``Kopis.handle``, and ``Kopis.get_handle`` makes
+a handle to any object (picklable or not) for sending. The live object
+stays alive on the side where it is, and the handle travels freely
 between server and client, in either direction, as many times as
 needed.
 
@@ -30,12 +30,19 @@ is asynchronous, value-returning operations are awaitable::
     del handle[key]                   # delete an item (fire and forget)
     async for x in handle: ...        # iterate
 
-The handle's own state (id, owner, reason) is private, so it never
-shadows an attribute of the live object: ``await handle.id`` reads the
-live object's ``id``, as if the handle were the object itself.
+The handle's own state (id, owner) is private, so it never shadows an
+attribute of the live object: ``await handle.id`` reads the live
+object's ``id``, as if the handle were the object itself.
 Operation results come back through the same serialization, so a
-result that is itself unserializable arrives as another ``RPCHandle``
-(still owned by the side that produced it).
+result that is itself unserializable cannot travel: the failure is
+reported to the other side as the error of the operation (an
+:class:`~kopis.common.RpcError` on the awaiting side), and the value
+stays alive on the side where it is.
+
+A handle that comes back to the side where it was made is unwrapped
+there, as an argument or result of a call or op: it is replaced by
+the live object it wraps — the object is already on that side, so it
+is passed as is.
 """
 
 from __future__ import annotations
@@ -154,9 +161,7 @@ class RPCHandle[T]:
     by the owning side when the handle is made), so this side prints
     the handle as ``<RPCHandle local ...>`` or ``<RPCHandle remote ...>``
     — ``local`` when this side owns the live object, ``remote`` when it
-    came from the other side — without a round trip. ``reason`` is the
-    string of the exception that made the value unserializable
-    (``None`` for an explicit handle).
+    came from the other side — without a round trip.
 
     The type parameter is optional and documents only: it names the
     type of the live object the handle points at (``RPCHandle[Point]``),
@@ -164,21 +169,24 @@ class RPCHandle[T]:
     checked at runtime.
 
     The handle's own state is private (``_id``, ``_owner_side``,
-    ``_owner_id``, ``_true_repr``, ``_reason``), so it never shadows an
-    attribute of the live object.
+    ``_owner_id``, ``_true_repr``), so it never shadows an attribute
+    of the live object.
 
     The handle is bound to a ``Kopis`` (``_kopis`` is set when the
     handle is made, and re-set when the receiving side decodes the
     message); every operation on the handle goes through that side's
     :meth:`KopisBase._handle_op`, which applies it locally when this
     side owns the live object, and sends it to the owner otherwise.
+
+    When the handle comes back to the side where it was made, it is
+    unwrapped there — the side passes its live object instead; see
+    the module docstring.
     """
 
     _id: int
     _owner_side: str
     _owner_id: str | None
     _true_repr: str
-    _reason: str | None
     _kopis: Any  # the Kopis of the side that holds this handle (None until bound)
 
     def __init__(
@@ -187,13 +195,11 @@ class RPCHandle[T]:
         owner_side: str,
         owner_id: str | None = None,
         true_repr: str = "",
-        reason: str | None = None,
     ) -> None:
         object.__setattr__(self, "_id", id)
         object.__setattr__(self, "_owner_side", owner_side)
         object.__setattr__(self, "_owner_id", owner_id)
         object.__setattr__(self, "_true_repr", true_repr)
-        object.__setattr__(self, "_reason", reason)
         object.__setattr__(self, "_kopis", None)
 
     def __reduce__(self):
@@ -203,13 +209,7 @@ class RPCHandle[T]:
         # the message.
         return (
             RPCHandle,
-            (
-                self._id,
-                self._owner_side,
-                self._owner_id,
-                self._true_repr,
-                self._reason,
-            ),
+            (self._id, self._owner_side, self._owner_id, self._true_repr),
         )
 
     def __repr__(self) -> str:

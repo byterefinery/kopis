@@ -1,4 +1,4 @@
-from kopis import Kopis, RPCHandle
+from kopis import Kopis, DOMEvent, RPCHandle
 
 
 k = Kopis()
@@ -15,36 +15,30 @@ class Point:
         return f"Point({self.x}, {self.y})"
 
 
-@k.rpc.register
-async def server_button_click(
-    name: str, e: RPCHandle, point: RPCHandle[Point]
-) -> object:
+@k.register
+async def server_button_click(name: str, e: RPCHandle[DOMEvent], point: RPCHandle[Point]) -> int:
     print("server_button_click", e, point)
 
-    v = await k.rpc.client_button_click(name, e, point)
+    v: int = await k.client_button_click(name, e, point)
     print("server_button_click", v)
     return v
 
 
-# short way (k.rpc.register is the canonical way)
 @k.register
-async def client_button_click(name: str, e: RPCHandle, point: RPCHandle[Point]) -> int:
-    # Called by the server. `e` is the same RPCHandle: the live event
-    # is in this tab, so it prints as "local", and operations on it
-    # run here, with no round trip. `point` is a real Point object (the
-    # same class exists on both sides).
+async def client_button_click(name: str, e: DOMEvent, point: Point) -> int:
     print("client_button_click", name, e, point)
     return 29
 
 
-async def btn0_click(e: object) -> None:
+async def btn0_click(e: DOMEvent):
     print("btn0_click", e)
-
-    # short way for k.rpc.server_button_click(...)
     point = Point(3, 4)
-    v = await k.server_button_click("btn0_click", e, k.get_handle(point))
 
+    e_h = k.get_handle(e)
+    point_h = k.get_handle(point)
+    v: int = await k.server_button_click("btn0_click", e_h, point_h)
     print("btn0_click result:", v)
+
     k.document.body.attach(f"\n{v!s}")
 
 
@@ -54,12 +48,7 @@ k.document.body.attach("""
     <button id="btn0">Demo</button>
 """)
 
-# Bind the click handler of btn0. All three lines are equivalent:
-#
-#   k.document["btn0"].addEventListener("click", btn0_click)
-#   k.document["btn0"]["onclick"] = btn0_click
-#   k["btn0"]["onclick"] = btn0_click
-k["btn0"]["onclick"] = btn0_click
 
+k["btn0"]["onclick"] = btn0_click
 print("k", k)
 k.run()

@@ -39,12 +39,19 @@ tab announces its own random ``client_id`` in the WebSocket URL (all
 tabs of a browser share the same session cookie, which would make them
 collide; the cookie identity remains as a fallback for clients that
 don't announce one), and all exchanged data is JSON: the values of
-``args``, ``kwargs``, and ``result`` are pickled
-Python objects (base64-encoded in the JSON), and a value that cannot be
-unpickled) does not travel: it stays alive on the side where it is,
-and an ``RPCHandle`` pointing at it arrives instead — a magic type
-through which the other side operates on the live object (the owner
-side applies each operation, and decides whether it can be performed).
+``args``, ``kwargs``, and ``result`` are pickled Python objects
+(base64-encoded in the JSON). A value that cannot be pickled on the
+sender side does not travel — the send raises, and the developer wraps
+such a value in an ``RPCHandle`` (``k.get_handle``) instead; the handle
+is a magic type through which the other side operates on the live
+object (the owner side applies each operation, and decides whether it
+can be performed). A value that cannot be unpickled on the receiver
+side is reported to the sender as the error of the message that carried
+it. A dropped connection loses no work: the client re-sends its
+in-flight calls and ops on reconnect, and the server runs each
+(client, id) at most once — a re-sent message is answered from the
+stored result. (A server restart re-runs calls that were in flight
+when it died.)
 """
 
 import asyncio
@@ -54,6 +61,7 @@ import itertools
 import json
 import sys
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +73,8 @@ from ..common import KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
 from . import browser
 
 __all__ = ["Kopis"]
+
+_RESULTS_CAP = 1000  # stored results kept, to answer re-sent messages
 
 
 def _entry_script() -> Path | None:
@@ -161,6 +171,13 @@ class Kopis(KopisBase):
         self._relay: dict[
             int, tuple[str, Any]
         ] = {}  # relayed op id -> (sender client, its id)
+        self._results: dict[tuple[str, Any], dict[str, Any]] = {}
+        # (client, id) -> result of its call or op, so a re-sent message
+        # (a dropped connection) is answered without re-running it
+        self._inflight: set[tuple[str, Any]] = set()  # (client, id) still running
+        self._relay_origin: dict[tuple[str, Any], int] = {}
+        # (sender client, its op id) -> relay id
+        self._relay_results: dict[int, dict[str, Any]] = {}  # relay id -> its result
         self._streams: dict[str, _Stream] = {}
         self._next_call_id = itertools.count(1)
         self._current_client: contextvars.ContextVar[str | None] = (
@@ -374,7 +391,8 @@ class Kopis(KopisBase):
         raises :class:`~kopis.common.RpcError` if the call failed there.
         The call is sent to the client's open WebSocket at once, or held
         in the queue and replayed when the client (re)connects. Requires a
-        running event loop.
+        running event loop. Raises if a value in the call cannot be
+        serialized: the call is not queued.
         """
         call_id = next(self._next_call_id)
         call: dict[str, Any] = {
@@ -385,6 +403,7 @@ class Kopis(KopisBase):
             "args": list(args),
             "kwargs": kwargs,
         }
+        encode(call)  # raises if a value in the call cannot be serialized
         self._pending_calls.setdefault(client_id, []).append(call)
         future = asyncio.get_running_loop().create_future()
         self._pending_results[call_id] = future
@@ -437,7 +456,7 @@ class Kopis(KopisBase):
                 pass
         for call in list(self._pending_calls.get(client_id, [])):
             stream.push(call)
-        sender = asyncio.ensure_future(self._ws_send(stream))
+        sender = asyncio.ensure_future(self._ws_send(stream, client_id))
         try:
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
@@ -447,6 +466,10 @@ class Kopis(KopisBase):
             # (re)connects.
             pass
         finally:
+            if ws.close_code not in (1000, 1001):
+                # An abnormal close (a dropped connection, a heartbeat
+                # failure, ...): worth seeing why.
+                print("kopis: ws closed", client_id, "code=", ws.close_code)
             if self._streams.get(client_id) is stream:
                 del self._streams[client_id]
             sender.cancel()
@@ -456,17 +479,50 @@ class Kopis(KopisBase):
                 pass
         return ws
 
-    async def _ws_send(self, stream: _Stream) -> None:
+    async def _ws_send(self, stream: _Stream, client_id: str) -> None:
         """Send queued messages to the client until the connection ends."""
         try:
             while True:
                 message = await stream.queue.get()
                 if message is None:
                     return
-                await stream.ws.send_str(encode(message, self.handle))
+                try:
+                    text = encode(message)
+                except Exception as exc:  # noqa: BLE001 - a value could not be serialized
+                    self._fail_message(client_id, message, exc)
+                    continue
+                await stream.ws.send_str(text)
         except Exception:  # noqa: BLE001, S110 - a dead connection just ends the sender
             # Queued calls remain pending and are replayed on reconnect.
             pass
+
+    def _fail_message(
+        self, client_id: str, message: dict[str, Any], exc: Exception
+    ) -> None:
+        """Drop a queued message that could no longer be encoded (a value
+        in it became unpicklable after it was queued), and report the
+        failure to the call or op that sent it, if it is still pending.
+        """
+        msg_id = message.get("id")
+        calls = self._pending_calls.get(client_id)
+        if calls is not None:
+            calls = [c for c in calls if c.get("id") != msg_id]
+            if calls:
+                self._pending_calls[client_id] = calls
+            else:
+                del self._pending_calls[client_id]
+        self._relay_results.pop(msg_id, None)
+        for key in [
+            key for key, relay_id in self._relay_origin.items() if relay_id == msg_id
+        ]:
+            del self._relay_origin[key]
+        future = self._pending_results.pop(msg_id, None)
+        origin = self._relay.pop(msg_id, None)
+        if future is None and origin is not None:
+            # A relayed op: report to the client that sent the op.
+            future = self._pending_results.pop(origin[1], None)
+        if future is not None and not future.done():
+            future.set_exception(RpcError(type(exc).__name__, str(exc)))
 
     def _handle_message(self, client_id: str, text: str) -> None:
         """Dispatch a message received from a client."""
@@ -485,18 +541,82 @@ class Kopis(KopisBase):
             self._resolve_result(client_id, msg)
 
     async def _run_client_call(self, client_id: str, msg: dict[str, Any]) -> None:
-        """Run a server function called by a client and send the result."""
-        payload: dict[str, Any] = {"type": "result", "id": msg.get("id")}
-        token = self._current_client.set(client_id)
-        try:
-            payload.update(
-                await self._dispatch(
-                    msg.get("method"), msg.get("args", []), msg.get("kwargs", {})
+        """Run a server function called by a client and send the result.
+
+        A re-sent call (a dropped connection) is not re-run: its stored
+        result is re-sent, and a call still running sends its result
+        when it completes — see :meth:`_run_deduped`.
+        """
+
+        async def run() -> dict[str, Any]:
+            payload: dict[str, Any] = {"type": "result", "id": msg.get("id")}
+            token = self._current_client.set(client_id)
+            try:
+                payload.update(
+                    await self._dispatch(
+                        msg.get("method"), msg.get("args", []), msg.get("kwargs", {})
+                    )
                 )
-            )
+            finally:
+                self._current_client.reset(token)
+            return payload
+
+        await self._run_deduped(client_id, msg, run)
+
+    async def _run_deduped(
+        self,
+        client_id: str,
+        msg: dict[str, Any],
+        run: Callable[[], Awaitable[dict[str, Any]]],
+    ) -> None:
+        """Run ``run`` for a client call or op, at most once per
+        (client, id), and store and send its result payload.
+
+        A dropped connection makes the client re-send the message, so a
+        second delivery of the same id is answered from the stored
+        result, or — while the first run is still going — ignored: its
+        result is stored and sent when it completes. A result value that
+        cannot be serialized is reported as the error of the result.
+        """
+        key = (client_id, msg.get("id"))
+        stored = self._results.get(key)
+        if stored is not None:
+            self._send_to(client_id, stored)
+            return
+        if key in self._inflight:
+            return
+        self._inflight.add(key)
+        try:
+            try:
+                payload: dict[str, Any] = await run()
+            except Exception as exc:  # noqa: BLE001 - report the failure
+                payload = {
+                    "type": "result",
+                    "id": key[1],
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                }
+            try:
+                encode(payload)
+            except Exception as exc:  # noqa: BLE001 - the result cannot travel
+                payload = {
+                    "type": "result",
+                    "id": key[1],
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                }
         finally:
-            self._current_client.reset(token)
+            self._inflight.discard(key)
+        self._remember(self._results, key, payload)
         self._send_to(client_id, payload)
+
+    @staticmethod
+    def _remember(
+        store: dict[Any, dict[str, Any]], key: Any, payload: dict[str, Any]
+    ) -> None:
+        """Store a result so a re-sent message can be answered from it,
+        evicting the oldest when the store outgrows ``_RESULTS_CAP``."""
+        store[key] = payload
+        while len(store) > _RESULTS_CAP:
+            del store[next(iter(store))]
 
     def _send_to(self, client_id: str, message: dict[str, Any]) -> None:
         """Queue a message for the client, if it is connected."""
@@ -540,36 +660,59 @@ class Kopis(KopisBase):
             return
         # The handle's live object is in another client: relay the op
         # there (with a fresh id), and route its result back to the
-        # sender.
-        relay_id = next(self._next_call_id)
-        self._relay[relay_id] = (client_id, msg.get("id"))
-        relayed = {**msg, "id": relay_id}
-        self._pending_calls.setdefault(owner_id, []).append(relayed)
-        self._send_to(owner_id, relayed)
+        # sender. A re-sent op (a dropped connection) is not relayed
+        # twice: if the relay already has a result, it is re-sent to
+        # the sender, and a relay that was dropped is relayed again.
+        origin_key = (client_id, msg.get("id"))
+        relay_id = self._relay_origin.get(origin_key)
+        if relay_id is None:
+            relay_id = next(self._next_call_id)
+            self._relay[relay_id] = (client_id, msg.get("id"))
+            self._relay_origin[origin_key] = relay_id
+            relayed = {**msg, "id": relay_id}
+            self._pending_calls.setdefault(owner_id, []).append(relayed)
+            self._send_to(owner_id, relayed)
+            return
+        stored = self._relay_results.get(relay_id)
+        if stored is not None:
+            # The relay already finished; the sender missed its result.
+            self._send_to(client_id, {**stored, "id": msg.get("id")})
+        elif relay_id in self._relay:
+            # Still pending: the sender gets the result when it comes.
+            pass
+        else:
+            # The relay was dropped: relay it again.
+            self._relay[relay_id] = (client_id, msg.get("id"))
+            relayed = {**msg, "id": relay_id}
+            self._pending_calls.setdefault(owner_id, []).append(relayed)
+            self._send_to(owner_id, relayed)
 
     async def _run_client_op(self, client_id: str, msg: dict[str, Any]) -> None:
         """Run an op the client sent for a handle this side owns, and
-        send the result."""
-        handle = msg.get("handle")
-        payload: dict[str, Any] = {"type": "result", "id": msg.get("id")}
-        if not isinstance(handle, RPCHandle):
-            payload["error"] = {
-                "type": "TypeError",
-                "message": f"bad op message: no handle: {handle!r}",
-            }
-            self._send_to(client_id, payload)
-            return
-        try:
-            payload["result"] = self._apply_op(
-                handle,
-                msg.get("op", ""),
-                msg.get("name"),
-                msg.get("args", []),
-                msg.get("kwargs", {}),
-            )
-        except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
-            payload["error"] = {"type": type(exc).__name__, "message": str(exc)}
-        self._send_to(client_id, payload)
+        send the result (deduplicated by (client, id), like a call)."""
+
+        async def run() -> dict[str, Any]:
+            handle = msg.get("handle")
+            payload: dict[str, Any] = {"type": "result", "id": msg.get("id")}
+            if not isinstance(handle, RPCHandle):
+                payload["error"] = {
+                    "type": "TypeError",
+                    "message": f"bad op message: no handle: {handle!r}",
+                }
+                return payload
+            try:
+                payload["result"] = self._apply_op(
+                    handle,
+                    msg.get("op", ""),
+                    msg.get("name"),
+                    msg.get("args", []),
+                    msg.get("kwargs", {}),
+                )
+            except Exception as exc:  # noqa: BLE001 - the owner decides; report it
+                payload["error"] = {"type": type(exc).__name__, "message": str(exc)}
+            return payload
+
+        await self._run_deduped(client_id, msg, run)
 
     def _handle_op(
         self,
@@ -588,7 +731,8 @@ class Kopis(KopisBase):
         sent to the client that owns the handle, like a call, and the
         future is settled by its ``result`` — or with an
         :class:`~kopis.common.RpcError` if the client could not perform
-        the op.
+        the op. If a value in the op cannot be serialized, the op
+        raises instead of being sent.
         """
         if kwargs is None:
             kwargs = {}
@@ -616,6 +760,7 @@ class Kopis(KopisBase):
             "args": list(args),
             "kwargs": kwargs,
         }
+        encode(message)  # raises if a value in the op cannot be serialized
         self._pending_calls.setdefault(owner_id, []).append(message)
         future = asyncio.get_running_loop().create_future()
         self._pending_results[call_id] = future
@@ -661,6 +806,9 @@ class Kopis(KopisBase):
         if future is not None and not future.done():
             self._settle_result(future, msg)
         elif origin is not None:
+            # A relayed op: remember the result, so an op the sender
+            # re-sends after a dropped connection gets it again.
+            self._remember(self._relay_results, call_id, msg)
             self._send_to(origin[0], {**msg, "id": origin[1]})
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:

@@ -4,7 +4,9 @@ No web server and no root directory: ``k.run()`` and
 ``k.add_static_file()`` are no-ops, and ``k.document`` is the browser
 document itself (the live DOM, the brython ``browser.document``). The RPC client half lives here: calls and results
 travel both ways over a single WebSocket connection per browser tab
-(``/__kopis__/rpc``), re-opened automatically on disconnect. The
+(``/__kopis__/rpc``), re-opened automatically on disconnect; the calls
+and ops in flight at the drop are re-sent on reconnect, and the server
+runs each id at most once, so a dropped connection loses no work. The
 browser's implicit event loop drives everything; ``aio.run`` starts a
 coroutine without blocking.
 """
@@ -51,10 +53,11 @@ class Kopis(KopisBase):
     Instantiate it in app code (the same code runs on the server, where
     :meth:`run` starts the web server, and in the browser, where it is a
     no-op). Values passed between the sides are pickled, so objects are
-    restored on the other end as long as their type exists there; anything
-    else stays alive on its side, and arrives as an
-    :class:`~kopis.common.RPCHandle`, through which the other side
-    operates on the live object::
+    restored on the other end as long as their type exists there. A value
+    that cannot be pickled does not travel: sending it raises, and the
+    developer wraps it in an explicit :class:`~kopis.common.RPCHandle`
+    with ``k.get_handle`` instead — the live object stays alive on its
+    side, and the other side operates on it through the handle::
 
         from kopis import Kopis
         k = Kopis()
@@ -65,7 +68,10 @@ class Kopis(KopisBase):
         result = await k.rpc.server_fn(x)   # calls a server function
 
     Calls and results travel both ways over a single WebSocket connection
-    per tab; it is re-opened automatically when the connection drops.
+    per tab; when the connection drops, it is re-opened automatically
+    and the calls in flight at the drop survive it: they are re-sent
+    on reconnect (the server runs each id at most once, so nothing
+    is done twice or lost).
     """
 
     side = "client"
@@ -75,10 +81,12 @@ class Kopis(KopisBase):
     ) -> None:
         super().__init__(use)
         self._pending: dict[int, Any] = {}  # call id -> future of a client call
+        self._pending_calls: dict[
+            int, dict[str, Any]
+        ] = {}  # call id -> the message sent (re-sent on reconnect)
         self._done: dict[
             tuple[str, int], dict[str, Any]
         ] = {}  # (instance, call id) -> result
-        self._outbox: list[dict[str, Any]] = []  # messages waiting for the connection
         self._next_id = itertools.count(1)
         self._client_id = _client_id()  # this tab's identity on the server
         self._owner_id = self._client_id  # this tab's identity in the handles it makes
@@ -121,10 +129,12 @@ class Kopis(KopisBase):
     async def _rpc_call(
         self, name: str, args: tuple[object, ...], kwargs: dict[str, object]
     ) -> object:
-        """Call a function registered on the server and await its result."""
+        """Call a function registered on the server and await its result.
+
+        Raises if a value in the call cannot be serialized: the call is
+        not sent.
+        """
         call_id = next(self._next_id)
-        fut = aio.Future()
-        self._pending[call_id] = fut
         self._send(
             {
                 "type": "call",
@@ -134,6 +144,8 @@ class Kopis(KopisBase):
                 "kwargs": kwargs,
             }
         )
+        fut = aio.Future()
+        self._pending[call_id] = fut
         return await fut
 
     def _connect(self) -> None:
@@ -150,10 +162,21 @@ class Kopis(KopisBase):
             if self._ws is not ws:
                 return
             self._open = True
-            # Send anything that was queued while the connection was down.
-            for message in self._outbox:
-                ws.send(encode(message, self.handle))
-            self._outbox.clear()
+            # Re-send the calls and ops still awaiting a result: what
+            # was sent before the connection dropped, and what was
+            # queued while it was down. The server runs each id at most
+            # once, so re-sending is safe.
+            for call_id in list(self._pending_calls):
+                call = self._pending_calls[call_id]
+                try:
+                    ws.send(encode(call))
+                except Exception as exc:  # noqa: BLE001 - a value could not be serialized
+                    # A value in the call can no longer be serialized:
+                    # fail it instead of re-sending it forever.
+                    del self._pending_calls[call_id]
+                    fut = self._pending.pop(call_id, None)
+                    if fut is not None and not fut.done():
+                        fut.set_exception(RpcError(type(exc).__name__, str(exc)))
 
         def on_message(event: Any) -> None:
             if self._ws is not ws:
@@ -165,15 +188,26 @@ class Kopis(KopisBase):
                 return
             self._open = False
             self._ws = None
-            # Client calls still in flight can no longer receive their result.
-            for fut in self._pending.values():
-                fut.set_exception(
-                    RpcError("ConnectionError", "connection to the server was lost")
-                )
-            self._pending.clear()
+            print(
+                "kopis: connection closed (code:",
+                getattr(event[0], "code", "?"),
+                ")",
+            )
             if self._closed_by_user:
+                # A deliberate close: in-flight calls can no longer
+                # complete.
+                for fut in self._pending.values():
+                    if not fut.done():
+                        fut.set_exception(
+                            RpcError("ConnectionError", "connection was closed")
+                        )
+                self._pending.clear()
+                self._pending_calls.clear()
                 return
-            print("kopis: connection closed, reconnecting")
+            # A dropped connection loses no work: in-flight calls are
+            # kept and re-sent on reconnect (the server runs each id at
+            # most once).
+            print("kopis: reconnecting")
             aio.run(self._reconnect())
 
         ws.bind("open", on_open)
@@ -181,14 +215,27 @@ class Kopis(KopisBase):
         ws.bind("close", on_close)
 
     def _send(self, message: dict[str, Any]) -> None:
-        """Send a message, or queue it until the connection is open again."""
+        """Encode a message and send it, if the connection is open.
+
+        Calls and ops are remembered by id and re-sent on reconnect,
+        so a dropped connection loses no work (the server runs each id
+        at most once). Results need no replay: when the sender of the
+        original call reconnects, it re-asks, and this side re-sends
+        the stored result.
+
+        Raises if a value in the message cannot be pickled: such a value
+        does not travel — the developer wraps it in an explicit
+        ``RPCHandle`` (``k.get_handle``) if it should.
+        """
+        text = encode(message)
+        if message.get("type") in ("call", "op"):
+            self._pending_calls[message["id"]] = message
         if self._open and self._ws is not None:
             try:
-                self._ws.send(encode(message, self.handle))
-                return
-            except Exception as exc:  # noqa: BLE001 - the socket is dying; queue it
+                self._ws.send(text)
+            except Exception as exc:  # noqa: BLE001 - the socket is dying
+                # The call or op is remembered, and re-sent on reconnect.
                 print("kopis: send failed:", exc)
-        self._outbox.append(message)
 
     def _handle_message(self, event: Any) -> None:
         """Handle a message received from the server."""
@@ -202,7 +249,9 @@ class Kopis(KopisBase):
         if msg.get("type") in ("call", "op"):
             aio.run(self._run_request(msg))
         elif msg.get("type") == "result":
-            fut = self._pending.pop(msg.get("id"), None)
+            call_id = msg.get("id")
+            self._pending_calls.pop(call_id, None)
+            fut = self._pending.pop(call_id, None)
             if fut is not None:
                 self._settle_result(fut, msg)
 
@@ -239,6 +288,17 @@ class Kopis(KopisBase):
                         msg.get("method"), msg.get("args", []), msg.get("kwargs", {})
                     )
                 )
+            try:
+                self._send(payload)
+            except Exception as exc:  # noqa: BLE001 - the result cannot be serialized
+                # Report the failure as the error of the call: the value
+                # stays alive on this side.
+                payload = {
+                    "type": "result",
+                    "id": call_id,
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                }
+                self._send(payload)
             self._done[key] = payload
             while len(self._done) > _DONE_CAP:
                 del self._done[next(iter(self._done))]
@@ -246,8 +306,7 @@ class Kopis(KopisBase):
             # Duplicate delivery: the server replays calls until its result
             # is received, so a reconnect can re-send one we already ran.
             # Re-send the stored result instead of running it again.
-            payload = done
-        self._send(payload)
+            self._send(done)
 
     def _dispatch_op(self, msg: dict[str, Any]) -> dict[str, Any]:
         """Run an op the server sent for a handle this side owns, and
@@ -293,7 +352,8 @@ class Kopis(KopisBase):
         which owns the object, or relays the op to the tab that does —
         and the future is settled by its ``result`` — or with an
         :class:`~kopis.common.RpcError` if the owner could not perform
-        the op.
+        the op. If a value in the op cannot be serialized, the op
+        raises instead of being sent.
         """
         if kwargs is None:
             kwargs = {}
@@ -305,8 +365,6 @@ class Kopis(KopisBase):
                 fut.set_exception(RpcError(type(exc).__name__, str(exc)))
             return fut
         call_id = next(self._next_id)
-        fut = aio.Future()
-        self._pending[call_id] = fut
         self._send(
             {
                 "type": "op",
@@ -318,6 +376,8 @@ class Kopis(KopisBase):
                 "kwargs": kwargs,
             }
         )
+        fut = aio.Future()
+        self._pending[call_id] = fut
         return fut
 
     async def _reconnect(self) -> None:

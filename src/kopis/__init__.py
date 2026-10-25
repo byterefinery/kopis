@@ -26,9 +26,10 @@ server it is a stand-in of the brython ``browser.document`` object,
 because the server has no live DOM and never parses the HTML it serves
 — the browser does that for it, in the brython way. Values exchanged
 between the sides are pickled by the shared ``kopis.common`` package; a
-value that cannot be (de)serialized stays alive on the side where it is,
-and arrives as an ``RPCHandle`` through which the other side operates
-on the live object.
+value that cannot be serialized does not travel — sending it raises,
+and the developer wraps it in an explicit ``RPCHandle``
+(``k.get_handle``) through which the other side operates on the live
+object.
 
 Developers import the brython objects from ``kopis``, never from
 ``browser`` or ``javascript`` directly: the names above are the unified

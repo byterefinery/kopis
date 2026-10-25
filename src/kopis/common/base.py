@@ -18,8 +18,8 @@ the two sides do the same way:
   and builds the ``result`` or ``error`` part of its payload;
 - :meth:`_settle_result`, which resolves the future of a pending call
   from its ``result`` message;
-- the registry of live objects this side keeps for values that do not
-  travel (:attr:`_handles`), and the ``RPCHandle``s that stand in for
+- the registry of live objects this side keeps for values wrapped in
+  handles (:attr:`_handles`), and the ``RPCHandle``s that stand in for
   them on the other side (:meth:`handle`, :meth:`get_handle`,
   :meth:`_apply_op`).
 """
@@ -162,16 +162,13 @@ class KopisBase(ABC):
 
     # -- RPC ----------------------------------------------------------------
 
-    def handle(self, value: object, reason: str | None = None) -> RPCHandle:
+    def handle(self, value: object) -> RPCHandle:
         """Wrap ``value`` in an ``RPCHandle``: keep ``value`` alive on
         this side, and return the handle that stands in for it.
 
-        This is the wrap that :func:`~kopis.common.wire.encode` runs
-        (as its ``maker``) when ``value`` cannot be pickled —
-        ``reason`` is the string of that exception — and the one behind
-        :meth:`get_handle`, for explicit handles. The live object stays
-        in :attr:`_handles`, and the handle — which carries this side's
-        identity — is what is sent to the other side.
+        This is the wrap behind :meth:`get_handle`. The live object
+        stays in :attr:`_handles`, and the handle — which carries this
+        side's identity — is what is sent to the other side.
         """
         handle_id = next(self._next_handle_id)
         self._handles[handle_id] = value
@@ -179,7 +176,7 @@ class KopisBase(ABC):
             true_repr = repr(value)
         except Exception as exc:  # noqa: BLE001 - the live repr is best effort
             true_repr = f"<unreprable {type(exc).__name__}>"
-        handle = RPCHandle(handle_id, self.side, self._owner_id, true_repr, reason)
+        handle = RPCHandle(handle_id, self.side, self._owner_id, true_repr)
         handle._kopis = self  # the handle is usable on this side at once
         return handle
 
@@ -188,7 +185,10 @@ class KopisBase(ABC):
 
         Works for any object — picklable or not: the live object stays
         on this side, and operations on the handle on the other side
-        come back here.
+        come back here. When the handle comes back to this side (as an
+        argument or result of a call or op), it is unwrapped: this
+        side passes the live ``value`` instead, since the object is
+        already here.
         """
         return self.handle(value)
 
@@ -208,7 +208,9 @@ class KopisBase(ABC):
         the future is settled with the (live) result itself; otherwise
         the op is sent to the owner, and the future is settled by its
         ``result`` message — with an :class:`~kopis.common.RpcError` if
-        the owner could not perform the op.
+        the owner could not perform the op. If a value in the op cannot
+        be serialized on this side, the op raises instead of being
+        sent.
         """
 
     def _apply_op(
@@ -259,7 +261,11 @@ class KopisBase(ABC):
         self, name: str, args: tuple[object, ...], kwargs: dict[str, object]
     ) -> object:
         """Send a call to a function registered on the other side and
-        await its result."""
+        await its result.
+
+        Raises if a value in the call cannot be serialized on this
+        side: the call is not sent.
+        """
 
     async def _dispatch(
         self, method: str | None, args: list[object], kwargs: dict[str, object]
