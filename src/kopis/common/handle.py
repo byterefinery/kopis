@@ -1,13 +1,19 @@
 """``RPCHandle`` — a stand-in for a live object on the other side.
 
-When a value cannot be serialized — pickled on the sender side, or
-unpickled on the receiver side — the value does not travel: it stays
-alive where it is, and an :class:`RPCHandle` pointing at it is sent
-instead. The handle carries the identity of that side (``owner_side``,
-and ``owner_id`` — the client id — when that side is a client tab),
-and ``reason``, the string of the exception that made the value
-unserializable. Handles travel freely between server and client, in
-either direction, as many times as needed.
+A value that cannot be serialized — pickled on the sender side, or
+unpickled on the receiver side — does not travel: it stays alive where
+it is, and an :class:`RPCHandle` pointing at it is sent instead. The
+wrap is ``Kopis.handle``; ``Kopis.get_handle`` makes an explicit handle
+to any object (picklable or not) for sending. Handles travel freely
+between server and client, in either direction, as many times as
+needed.
+
+A handle prints as ``<RPCHandle local ...>`` or ``<RPCHandle remote ...>``
+— ``local`` when this side owns the live object, ``remote`` when it
+came from the other side — followed by the true representation of the
+live object, which the owning side computes (a call of its ``__repr__``)
+when the handle is made. The string travels with the handle, so the
+receiving side prints it locally, with no round trip.
 
 An ``RPCHandle`` is a magic type: every operation on it is accepted,
 and sent over the wire to the side that owns the live object. It is
@@ -139,20 +145,26 @@ class _AsyncList:
 
 
 class RPCHandle:
-    """A stand-in for a live object that could not be serialized.
+    """A stand-in for a live object that does not travel.
 
     The live object stays on the side that owns it (``owner_side``, and
     ``owner_id`` — the client id — when that side is a client tab), and
-    this handle is what travels. ``reason`` is the string of the
-    exception that made the value unserializable.
+    this handle is what travels. ``true_repr`` is the true
+    representation of the live object (a call of its ``__repr__``, made
+    by the owning side when the handle is made), so this side prints
+    the handle as ``<RPCHandle local ...>`` or ``<RPCHandle remote ...>``
+    — ``local`` when this side owns the live object, ``remote`` when it
+    came from the other side — without a round trip. ``reason`` is the
+    string of the exception that made the value unserializable
+    (``None`` for an explicit handle).
 
     The handle's own state is private (``_id``, ``_owner_side``,
-    ``_owner_id``, ``_reason``), so it never shadows an attribute of
-    the live object.
+    ``_owner_id``, ``_true_repr``, ``_reason``), so it never shadows an
+    attribute of the live object.
 
-    The handle is bound to the ``Kopis`` of the side that receives it
-    (``_kopis`` is set when the receiving side decodes the message);
-    every operation on the handle goes through that side's
+    The handle is bound to a ``Kopis`` (``_kopis`` is set when the
+    handle is made, and re-set when the receiving side decodes the
+    message); every operation on the handle goes through that side's
     :meth:`KopisBase._handle_op`, which applies it locally when this
     side owns the live object, and sends it to the owner otherwise.
     """
@@ -160,6 +172,7 @@ class RPCHandle:
     _id: int
     _owner_side: str
     _owner_id: str | None
+    _true_repr: str
     _reason: str | None
     _kopis: Any  # the Kopis of the side that holds this handle (None until bound)
 
@@ -168,11 +181,13 @@ class RPCHandle:
         id: int,
         owner_side: str,
         owner_id: str | None = None,
+        true_repr: str = "",
         reason: str | None = None,
     ) -> None:
         object.__setattr__(self, "_id", id)
         object.__setattr__(self, "_owner_side", owner_side)
         object.__setattr__(self, "_owner_id", owner_id)
+        object.__setattr__(self, "_true_repr", true_repr)
         object.__setattr__(self, "_reason", reason)
         object.__setattr__(self, "_kopis", None)
 
@@ -183,17 +198,24 @@ class RPCHandle:
         # the message.
         return (
             RPCHandle,
-            (self._id, self._owner_side, self._owner_id, self._reason),
+            (
+                self._id,
+                self._owner_side,
+                self._owner_id,
+                self._true_repr,
+                self._reason,
+            ),
         )
 
     def __repr__(self) -> str:
-        owner = self._owner_side
-        if self._owner_id is not None:
-            owner += f" {self._owner_id}"
-        text = f"RPCHandle({owner}, {self._id})"
-        if self._reason is not None:
-            text += f" — {self._reason}"
-        return text
+        # Local print: the true repr of the live object travels with the
+        # handle (the owner computed it when the handle was made), so
+        # no round trip is needed.
+        if self._kopis is not None and self._owner_side == self._kopis.side:
+            side = "local"
+        else:
+            side = "remote"
+        return f"<RPCHandle {side} {self._true_repr}>"
 
     __str__ = __repr__
 

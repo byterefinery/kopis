@@ -463,7 +463,7 @@ class Kopis(KopisBase):
                 message = await stream.queue.get()
                 if message is None:
                     return
-                await stream.ws.send_str(encode(message, self._make_handle))
+                await stream.ws.send_str(encode(message, self.handle))
         except Exception:  # noqa: BLE001, S110 - a dead connection just ends the sender
             # Queued calls remain pending and are replayed on reconnect.
             pass

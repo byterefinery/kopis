@@ -152,7 +152,7 @@ class Kopis(KopisBase):
             self._open = True
             # Send anything that was queued while the connection was down.
             for message in self._outbox:
-                ws.send(encode(message, self._make_handle))
+                ws.send(encode(message, self.handle))
             self._outbox.clear()
 
         def on_message(event: Any) -> None:
@@ -184,7 +184,7 @@ class Kopis(KopisBase):
         """Send a message, or queue it until the connection is open again."""
         if self._open and self._ws is not None:
             try:
-                self._ws.send(encode(message, self._make_handle))
+                self._ws.send(encode(message, self.handle))
                 return
             except Exception as exc:  # noqa: BLE001 - the socket is dying; queue it
                 print("kopis: send failed:", exc)

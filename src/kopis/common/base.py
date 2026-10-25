@@ -18,9 +18,10 @@ the two sides do the same way:
   and builds the ``result`` or ``error`` part of its payload;
 - :meth:`_settle_result`, which resolves the future of a pending call
   from its ``result`` message;
-- the registry of live objects this side keeps for values it could not
-  serialize (:attr:`_handles`), and the ``RPCHandle``s that stand in
-  for them on the other side (:meth:`_make_handle`, :meth:`_apply_op`).
+- the registry of live objects this side keeps for values that do not
+  travel (:attr:`_handles`), and the ``RPCHandle``s that stand in for
+  them on the other side (:meth:`handle`, :meth:`get_handle`,
+  :meth:`_apply_op`).
 """
 
 from abc import ABC, abstractmethod
@@ -161,17 +162,35 @@ class KopisBase(ABC):
 
     # -- RPC ----------------------------------------------------------------
 
-    def _make_handle(self, value: Any, reason: str) -> RPCHandle:
-        """Keep ``value`` alive on this side and return its ``RPCHandle``.
+    def handle(self, value: object, reason: str | None = None) -> RPCHandle:
+        """Wrap ``value`` in an ``RPCHandle``: keep ``value`` alive on
+        this side, and return the handle that stands in for it.
 
-        Called by :func:`~kopis.common.wire.encode` (as its ``maker``)
-        when ``value`` cannot be pickled: the value stays in
-        :attr:`_handles`, and the handle — which carries this side's
+        This is the wrap that :func:`~kopis.common.wire.encode` runs
+        (as its ``maker``) when ``value`` cannot be pickled —
+        ``reason`` is the string of that exception — and the one behind
+        :meth:`get_handle`, for explicit handles. The live object stays
+        in :attr:`_handles`, and the handle — which carries this side's
         identity — is what is sent to the other side.
         """
         handle_id = next(self._next_handle_id)
         self._handles[handle_id] = value
-        return RPCHandle(handle_id, self.side, self._owner_id, reason)
+        try:
+            true_repr = repr(value)
+        except Exception as exc:  # noqa: BLE001 - the live repr is best effort
+            true_repr = f"<unreprable {type(exc).__name__}>"
+        handle = RPCHandle(handle_id, self.side, self._owner_id, true_repr, reason)
+        handle._kopis = self  # the handle is usable on this side at once
+        return handle
+
+    def get_handle(self, value: object) -> RPCHandle:
+        """Get an ``RPCHandle`` to ``value``, to send to the other side.
+
+        Works for any object — picklable or not: the live object stays
+        on this side, and operations on the handle on the other side
+        come back here.
+        """
+        return self.handle(value)
 
     @abstractmethod
     def _handle_op(
