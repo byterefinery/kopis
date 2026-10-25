@@ -77,6 +77,12 @@ class DOMNode(Magic):
 
     __repr__ = __str__
 
+    def __getitem__(self, key: object) -> DOMNode:
+        """The element with that id, or the value of that attribute
+        (the brython subscript; a stand-in on the server: there is no
+        live DOM, so the result is always a stand-in element)."""
+        return DOMNode()
+
     def clone(self) -> DOMNode:
         """A stand-in copy of this element (the brython ``clone``)."""
         return DOMNode()

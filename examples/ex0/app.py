@@ -47,16 +47,24 @@ async def btn0_click(e: object) -> None:
     v = await k.server_button_click("btn0_click", e, Point(3, 4))
 
     print("btn0_click result:", v)
-    k.document.body <= f"\n{v!s}"
+    k.document.body.attach(f"\n{v!s}")
 
 
-k.document.body <= "Hello 4 !"
+k.document.body.attach("""
+    Hello 4 !
 
-k.document.body <= """
     <button id="btn0">Demo</button>
-"""
+""")
 
-k.document["btn0"].addEventListener("click", btn0_click)
+# Bind the click handler of btn0. All three lines are equivalent:
+#
+#   k.document["btn0"].addEventListener("click", btn0_click)
+#   k.document["btn0"]["onclick"] = btn0_click
+#   k["btn0"]["onclick"] = btn0_click
+#
+# (k["btn0"] is k.document["btn0"], the element with id "btn0"; a
+# coroutine handler is started with aio.run, so await works inside it.)
+k["btn0"]["onclick"] = btn0_click
 
 print("k", k)
 k.run()

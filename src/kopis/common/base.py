@@ -11,7 +11,9 @@ the two sides do the same way:
   registered with it;
 - the ``k.rpc`` proxy, which calls a function registered on the other
   side (the actual sending of the call is left to :meth:`_rpc_call`);
-  ``k.name(...)`` is the short way for ``k.rpc.name(...)``;
+  ``k.name(...)`` is the short way for ``k.rpc.name(...)``, and
+  ``k["id"]`` the short way for ``k.document["id"]`` (the element with
+  that id);
 - :meth:`_dispatch`, which runs a function called by the other side
   and builds the ``result`` or ``error`` part of its payload;
 - :meth:`_settle_result`, which resolves the future of a pending call
@@ -92,6 +94,17 @@ class KopisBase(ABC):
     @abstractmethod
     def document(self) -> Any:
         """A live view of the document."""
+
+    def __getitem__(self, key: object) -> Any:
+        """The element of the document with that id: ``k["btn0"]`` is
+        the same as ``k.document["btn0"]``.
+
+        On the client (the live DOM) it is the element itself, and
+        ``KeyError`` is raised if no element has that id, as in brython;
+        on the server (no live DOM) it is a stand-in element, as with
+        everything else on the document.
+        """
+        return self.document[key]
 
     def register(self, func: Callable[..., Any]) -> Callable[..., Any]:
         """Register a function so that the other side can call it via

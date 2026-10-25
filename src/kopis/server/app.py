@@ -95,6 +95,19 @@ class _Stream:
         self.queue.put_nowait(None)
 
 
+@web.middleware
+async def _no_cache(request: web.Request, handler: Any) -> web.StreamResponse:
+    """Make the browser revalidate every response before using a cached
+    copy (``Cache-Control: no-cache``): the URLs Brython's import system
+    fetches carry no version, so a stale cached page or module would
+    silently break the app; revalidating is cheap (a 304 for unchanged
+    files)."""
+    response = await handler(request)
+    if isinstance(response, web.StreamResponse) and not response.prepared:
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 class Kopis(KopisBase):
     """A web application served from a root directory.
 
@@ -147,7 +160,7 @@ class Kopis(KopisBase):
             contextvars.ContextVar("kopis_current_client", default=None)
         )
 
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[_no_cache])
         # Sessions (cookie-based) identify which client a request comes
         # from. The key is derived from the root directory, so it survives
         # server restarts: a client that reconnects after a restart is

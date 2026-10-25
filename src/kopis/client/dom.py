@@ -26,6 +26,17 @@ This module extends both, once, by monkey-patching the brython
           k.document <= value
 
       k.document["btn"].addEventListener("click", click)
+- an event handler can also be bound with the attribute syntax
+  ``element["on<event>"] = func`` (e.g. ``element["onclick"] = func``):
+  it is the same as ``element.addEventListener("<event>", func)`` (a
+  coroutine ``func`` is started with ``aio.run``); reading
+  ``element["on<event>"]`` gives back the bound handler (the first one,
+  if several are bound), and ``element["on<event>"] = None`` unbinds
+  the handlers of ``<event>``. Any other subscript is a plain attribute
+  get/set, as in brython::
+
+      k.document["btn"]["onclick"] = click      # same as addEventListener
+      k["btn"]["onclick"] = click              # k["id"] is k.document["id"]
 
 Nothing else about the DOM changes: ``+`` still groups (a string
 grouped with ``+`` is still a text node), ``del`` still removes, and
@@ -37,6 +48,14 @@ from browser import DOMNode, aio, document
 from inspect import iscoroutinefunction
 
 __all__ = ["install"]
+
+
+def _event_name(key: object) -> str | None:
+    """The event name hidden behind an ``on<event>`` key (``None`` if
+    ``key`` is not such a key)."""
+    if isinstance(key, str) and key.startswith("on") and len(key) > 2:
+        return key[2:]
+    return None
 
 
 def _append_fragment(self: DOMNode, html_str: str) -> DOMNode:
@@ -59,6 +78,10 @@ def install() -> None:
 
     _orig_le = DOMNode.__le__
     _orig_bind = DOMNode.bind
+    _orig_events = DOMNode.events
+    _orig_getitem = DOMNode.__getitem__
+    _orig_setitem = DOMNode.__setitem__
+    _orig_unbind = DOMNode.unbind
 
     def attach(self: DOMNode, other: object) -> DOMNode:
         if isinstance(other, str):
@@ -82,8 +105,39 @@ def install() -> None:
             func = wrapped
         return _orig_bind(self, event, func, options)
 
+    def setitem(self: DOMNode, key: object, value: object) -> None:
+        """Set an attribute, or — with an ``on<event>`` key — an event
+        handler: ``element["on<event>"] = func`` is the same as
+        ``element.addEventListener("<event>", func)`` (a coroutine
+        ``func`` is started with ``aio.run`` when the event fires), and
+        ``element["on<event>"] = None`` unbinds the handlers of
+        ``<event>``. Any other key is a plain attribute set, as in
+        brython."""
+        event = _event_name(key)
+        if event is not None:
+            if value is None:
+                _orig_unbind(self, event)
+                return
+            if callable(value):
+                bind(self, event, value)
+                return
+        return _orig_setitem(self, key, value)
+
+    def getitem(self: DOMNode, key: object) -> object:
+        """Read an attribute, or — with an ``on<event>`` key — the
+        handler bound with ``element["on<event>"] = func`` (the first
+        one, if several are bound)."""
+        event = _event_name(key)
+        if event is not None:
+            handlers = _orig_events(self, event)
+            if handlers:
+                return handlers[0]
+        return _orig_getitem(self, key)
+
     DOMNode.attach = attach
     DOMNode.__le__ = le
     DOMNode.bind = bind
     DOMNode.addEventListener = bind
+    DOMNode.__setitem__ = setitem
+    DOMNode.__getitem__ = getitem
     DOMNode._kopis_extended = True
