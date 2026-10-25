@@ -29,7 +29,7 @@ import json
 import pickle
 from typing import Any
 
-from .handle import RPCHandle
+from .handle import RPCHandle, _HandleAttr
 
 __all__ = ["WS_PATH", "RpcError", "decode", "encode"]
 
@@ -73,6 +73,11 @@ def _bind(value: Any, binder: Any) -> Any:
     back to the side where it was made (see :func:`_unwrap`). Returns
     the value, possibly replaced — or, for an immutable container,
     a copy of it holding the replacement."""
+    if isinstance(value, _HandleAttr):
+        # A method stand-in: rebind its handle, so operations on it
+        # go through the receiving side.
+        value._handle = _bind(value._handle, binder)
+        return value
     if isinstance(value, RPCHandle):
         value._kopis = binder
         live = _unwrap(value, binder)

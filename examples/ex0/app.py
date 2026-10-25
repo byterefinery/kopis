@@ -24,10 +24,13 @@ class Point:
 
 
 @k.register
-async def server_button_click(name: str, e: RPCHandle[DOMEvent], point: Point) -> int:
+async def server_button_click(
+    name: str, e: RPCHandle[DOMEvent], point: RPCHandle[Point]
+) -> int:
     print("server_button_click", e, point)
     await point.set_xy(-1, -2)
-    print("server_button_click", point.get_xy())
+    x, y = point.get_xy()
+    print("server_button_click", x, y)
 
     v: int = await k.client_button_click(name, e, point)
     print("server_button_click", v)
@@ -45,7 +48,8 @@ async def btn0_click(e: DOMEvent):
     point = Point(3, 4)
 
     e_h = k.get_handle(e)
-    v: int = await k.server_button_click("btn0_click", e_h, point)
+    point_h = k.get_handle(point)
+    v: int = await k.server_button_click("btn0_click", e_h, point_h)
     print("btn0_click result:", v)
 
     k.document.body.attach(f"\n{v!s}")

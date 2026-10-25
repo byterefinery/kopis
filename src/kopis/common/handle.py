@@ -19,16 +19,28 @@ An ``RPCHandle`` is a magic type: every operation on it is accepted,
 and sent over the wire to the side that owns the live object. It is
 the owner — the original place where the live object is — that applies
 the operation and decides whether it can be performed; a failure there
-comes back as an :class:`~kopis.common.RpcError`. Since the round trip
-is asynchronous, value-returning operations are awaitable::
+comes back as an :class:`~kopis.common.RpcError`. The live object may
+be on this side (the op applies at once) or on the other side (a round
+trip); in both cases the call reads naturally, mirroring the live
+object: a sync function, method, or attribute is invoked and returns
+its value, and a coroutine method is invoked and awaited::
 
-    value = await handle.attr         # read an attribute
-    result = await handle.method(a)   # call a method
-    item = await handle[key]          # subscript
-    handle.attr = value               # set an attribute (fire and forget)
-    handle[key] = value               # set an item (fire and forget)
-    del handle[key]                   # delete an item (fire and forget)
-    async for x in handle: ...        # iterate
+    value = handle.attr           # read an attribute
+    result = handle.method(a)     # call a sync method
+    result = await handle.method(a)   # call a coroutine method
+    item = handle[key]            # subscript
+    handle.attr = value           # set an attribute
+    handle[key] = value           # set an item
+    del handle[key]               # delete an item
+    async for x in handle: ...    # iterate
+
+How the round trip happens depends on the side: when the live object
+is on this side, the op applies at once (no wire at all); when it is
+on the other side, the server — which runs the calling code off its
+event loop — performs the round trip and blocks the calling thread,
+while the client (whose single browser thread cannot block) returns
+an awaitable future instead, so there ``await handle.method(a)`` and
+``await handle.attr`` are the forms that work.
 
 The handle's own state (id, owner) is private, so it never shadows an
 attribute of the live object: ``await handle.id`` reads the live
@@ -62,7 +74,13 @@ _PROMISE_WRAP_JS = (
     "  }"
     "  return function (fut) {"
     "    return new P(function (resolve, reject) {"
-    "      fut.then(resolve, reject)"
+    "      if (fut && typeof fut.then === 'function') {"
+    "        fut.then(resolve, reject)"
+    "      } else {"
+    "        // A plain value (a locally-owned op applied at once):"
+    "        // resolve it directly."
+    "        resolve(fut)"
+    "      }"
     "    })"
     "  }"
     "})()"
@@ -102,17 +120,26 @@ def _await_future(future: Any):
 
 
 class _HandleAttr:
-    """``handle.attr``: an attribute of the live object, or a call on it.
+    """``handle.attr``: a method of the live object (or an attribute
+    read, on the client, where the read cannot block the browser
+    thread).
 
-    Awaiting it reads the attribute on the live object (``await
-    handle.attr``); calling it invokes it there (``await
-    handle.attr(*args, **kwargs)``), and in both cases returns a future
-    of the result, settled by the owner side.
+    Calling it invokes the method on the live object (``handle.attr(
+    *args, **kwargs)``): the result of a sync method is returned
+    directly, and the result of a coroutine method is an awaitable. On
+    the client, awaiting it reads the attribute on the live object
+    (``await handle.attr``).
     """
 
     def __init__(self, handle: RPCHandle, name: str) -> None:
         self._handle = handle
         self._name = name
+
+    def __reduce__(self):
+        # The stand-in travels like a handle: its handle travels (bound
+        # again by the receiver when it decodes the message), and its
+        # name is plain data.
+        return (_HandleAttr, (self._handle, self._name))
 
     def __call__(self, *args: object, **kwargs: object) -> Any:
         return self._handle._kopis._handle_op(
@@ -120,10 +147,19 @@ class _HandleAttr:
         )
 
     def __await__(self):
-        future = self._handle._kopis._handle_op(self._handle, "getattr", self._name)
+        result = self._handle._kopis._handle_op(self._handle, "getattr", self._name)
         if platform.python_implementation() == "Brython":
-            return _brython_promise_wrap()(future)
-        return _await_future(future)
+            # The client's remote op returns a future (a native
+            # promise): brython's await drives it natively.
+            return _brython_promise_wrap()(result)
+        if hasattr(result, "_asyncio_future_blocking"):
+            return _await_future(result)
+
+        def _value(value: Any) -> Any:
+            yield from ()
+            return value
+
+        return _value(result)
 
     def __repr__(self) -> str:
         return f"<RPCHandle attribute {self._name!r}>"
@@ -133,17 +169,14 @@ class _AsyncList:
     """An async iterator over the items of the live object (the result
     of an ``iter`` operation on it)."""
 
-    def __init__(self, future: Any) -> None:
-        self._items: list[Any] | None = None
+    def __init__(self, items: list[Any]) -> None:
+        self._items = list(items)
         self._index = 0
-        self._future = future
 
     def __aiter__(self) -> _AsyncList:
         return self
 
     async def __anext__(self) -> Any:
-        if self._items is None:
-            self._items = list(await self._future)
         if self._index >= len(self._items):
             raise StopAsyncIteration
         item = self._items[self._index]
@@ -226,12 +259,15 @@ class RPCHandle[T]:
 
     # -- the magic interface: every operation goes to the owner ---------
 
-    def __getattr__(self, name: str) -> _HandleAttr:
-        # Any (public) attribute of the live object; awaiting it reads
-        # it there, calling it invokes it there.
+    def __getattr__(self, name: str) -> Any:
+        # A (public) attribute of the live object: its value for a data
+        # attribute, a call stand-in (_HandleAttr) for a method — the
+        # getattr op is performed by this side's Kopis, which applies
+        # it at once when this side owns the live object and travels it
+        # to the owner otherwise.
         if name.startswith("_"):
             raise AttributeError(name)
-        return _HandleAttr(self, name)
+        return self._kopis._handle_getattr(self, name)
 
     def __setattr__(self, name: str, value: object) -> None:
         if name.startswith("_"):
@@ -244,7 +280,8 @@ class RPCHandle[T]:
         return self._kopis._handle_op(self, "call", None, args, kwargs)
 
     def __getitem__(self, key: object) -> Any:
-        # A future of the item: ``await handle[key]``.
+        # The item: its value for a sync ``__getitem__``, an awaitable
+        # if the live object's is a coroutine.
         return self._kopis._handle_op(self, "getitem", None, (key,))
 
     def __setitem__(self, key: object, value: object) -> None:
@@ -254,13 +291,16 @@ class RPCHandle[T]:
         self._send_mutation("delitem", None, (key,))
 
     def __aiter__(self) -> _AsyncList:
-        return _AsyncList(self._kopis._handle_op(self, "iter"))
+        items = self._kopis._handle_op(self, "iter")
+        return _AsyncList(items)
 
     def _send_mutation(self, op: str, name: str | None, args: tuple) -> None:
-        """Send a mutation (``setattr`` / ``setitem`` / ``delitem``).
+        """Perform a mutation (``setattr`` / ``setitem`` / ``delitem``).
 
-        Mutations are fire and forget: the owner applies them; since a
-        synchronous dunder cannot await the outcome, any failure there
-        goes unreported.
+        The owner applies it: on the server the mutation is synchronous
+        (the round trip completes before the assignment returns, and a
+        failure raises); on the client it is fire and forget (a
+        synchronous dunder cannot await the outcome, so any failure
+        there goes unreported).
         """
         self._kopis._handle_op(self, op, name, args, {})

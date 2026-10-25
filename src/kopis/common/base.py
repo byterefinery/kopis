@@ -33,7 +33,7 @@ from itertools import count
 from pathlib import Path
 from typing import Any
 
-from .handle import RPCHandle
+from .handle import RPCHandle, _HandleAttr
 from .wire import RpcError
 
 __all__ = ["KopisBase"]
@@ -209,19 +209,25 @@ class KopisBase(ABC):
         args: tuple[object, ...] = (),
         kwargs: dict[str, object] | None = None,
     ) -> Any:
-        """Perform ``op`` of ``handle`` and return a future of its
-        result.
+        """Perform ``op`` of ``handle`` and return its result.
 
-        If this side owns the live object, the op is applied here, and
-        the future is settled with the (live) result itself; otherwise
-        the op is sent to the owner, and the future is settled by its
-        ``result`` message — with an :class:`~kopis.common.RpcError` if
-        the owner could not perform the op. If a value in the op cannot
-        be serialized on this side, the op raises instead of being
-        sent.
+        If this side owns the live object, the op is applied at once:
+        a sync operation returns its value, and a coroutine method
+        returns its coroutine (the caller awaits it). Otherwise the op
+        goes to the owner: the server (which runs the calling code off
+        its event loop) performs the round trip and blocks the calling
+        thread — a sync operation returns its value, and a coroutine
+        method returns an awaitable holding the result; the client
+        (whose single browser thread cannot block) returns an
+        awaitable future instead. A failure of the op — or of the
+        round trip itself — raises an
+        :class:`~kopis.common.RpcError` where the side can, and is
+        reported as the error of the op's result otherwise. If a value
+        in the op cannot be serialized on this side, the op raises
+        instead of being sent.
         """
 
-    async def _apply_op(
+    def _apply_op(
         self,
         handle: RPCHandle,
         op: str,
@@ -230,12 +236,14 @@ class KopisBase(ABC):
         kwargs: Mapping[str, object],
     ) -> Any:
         """Apply ``op`` to the live object behind ``handle`` (this side
-        owns it), and return its result.
+        owns it), and return its result — a value, or a coroutine if a
+        coroutine method was called (the caller awaits it).
 
-        A ``call`` whose result is a coroutine is awaited, so a
-        coroutine method of the live object works over a handle the
-        same way it does locally. The owner side decides whether the
-        op can be performed: any failure raises, and is reported to the
+        A ``getattr`` of a callable attribute returns a
+        :class:`~kopis.common.handle._HandleAttr` stand-in: the method
+        itself cannot travel, but the stand-in travels, and invoking
+        it fires a ``call`` op. The owner side decides whether the op
+        can be performed: any failure raises, and is reported to the
         other side as the error of the op's result.
         """
         obj = self._handles.get(handle._id)
@@ -244,15 +252,18 @@ class KopisBase(ABC):
         if op == "getattr":
             if name is None:
                 raise ValueError("getattr op requires a name")
-            return getattr(obj, name)
+            value = getattr(obj, name)
+            if iscoroutine(value):
+                raise ValueError(
+                    f"attribute {name!r} is a coroutine object; it cannot travel"
+                )
+            if callable(value):
+                return _HandleAttr(handle, name)
+            return value
         if op == "call":
             if name is None:
-                result = obj(*args, **kwargs)
-            else:
-                result = getattr(obj, name)(*args, **kwargs)
-            if iscoroutine(result):
-                result = await result
-            return result
+                return obj(*args, **kwargs)
+            return getattr(obj, name)(*args, **kwargs)
         if op == "getitem":
             return obj[args[0]]
         if op == "setitem":
@@ -270,30 +281,13 @@ class KopisBase(ABC):
             return list(obj)
         raise ValueError(f"unknown RPCHandle op {op!r}")
 
-    async def _local_op(
-        self,
-        future: Any,
-        handle: RPCHandle,
-        op: str,
-        name: str | None,
-        args: Sequence[object],
-        kwargs: Mapping[str, object],
-    ) -> None:
-        """Apply ``op`` of ``handle`` on this side (which owns the live
-        object) and settle ``future`` with its result.
-
-        A failure of the op is settled on ``future`` as an
-        :class:`~kopis.common.RpcError` (the owner decides whether the
-        op can be performed).
-        """
-        try:
-            result = await self._apply_op(handle, op, name, args, kwargs)
-        except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
-            if not future.done():
-                future.set_exception(RpcError(type(exc).__name__, str(exc)))
-        else:
-            if not future.done():
-                future.set_result(result)
+    def _handle_getattr(self, handle: RPCHandle, name: str) -> Any:
+        """The result of ``handle.<name>``: the live value of a data
+        attribute, or a :class:`~kopis.common.handle._HandleAttr`
+        stand-in for a method (a ``getattr`` op performed by
+        :meth:`_handle_op`, so it applies at once on this side and
+        travels to the owner otherwise)."""
+        return self._handle_op(handle, "getattr", name)
 
     @abstractmethod
     async def _rpc_call(

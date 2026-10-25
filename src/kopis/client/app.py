@@ -14,12 +14,14 @@ coroutine without blocking.
 import itertools
 import json
 import uuid
+from inspect import iscoroutine
 from pathlib import Path
 from typing import Any
 
 from browser import DOMNode, aio, document, window, websocket
 
 from ..common import KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
+from ..common.handle import _HandleAttr
 from .parser import parse_html
 
 __all__ = ["Kopis"]
@@ -123,6 +125,19 @@ class Kopis(KopisBase):
             return self.document[name]
         except KeyError:
             return super().__getattr__(name)
+
+    def _handle_getattr(self, handle: RPCHandle, name: str) -> Any:
+        """The result of ``handle.<name>``.
+
+        For a handle this tab owns, the attribute is read at once: a
+        value for a data attribute, a call stand-in for a method. For
+        a remote handle, reading cannot block the browser's single
+        thread, so a call stand-in is returned at once: await it to
+        read the attribute, or call it to invoke a method.
+        """
+        if handle._owner_side == self.side and handle._owner_id == self._client_id:
+            return self._handle_op(handle, "getattr", name)
+        return _HandleAttr(handle, name)
 
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """No-op on the client: files are served by the server."""
@@ -347,13 +362,16 @@ class Kopis(KopisBase):
                 }
             }
         try:
-            result = await self._apply_op(
+            result = self._apply_op(
                 handle,
                 msg.get("op", ""),
                 msg.get("name"),
                 msg.get("args", []),
                 msg.get("kwargs", {}),
             )
+            if iscoroutine(result):
+                result = await result
+                return {"result": result, "awaited": True}
             return {"result": result}
         except Exception as exc:  # noqa: BLE001 - the owner decides; report the failure
             return {"error": {"type": type(exc).__name__, "message": str(exc)}}
@@ -370,20 +388,20 @@ class Kopis(KopisBase):
         result.
 
         If the live object is in this tab (the client owns the handle),
-        the op is applied locally, and the future is settled with the
-        (live) result itself. Otherwise the op is sent to the server —
-        which owns the object, or relays the op to the tab that does —
-        and the future is settled by its ``result`` — or with an
+        the op is applied at once: a sync operation returns its value,
+        and a coroutine method returns its coroutine (await it).
+        Otherwise the op is sent to the server — which owns the
+        object, or relays the op to the tab that does — and a future
+        is returned, settled by its ``result`` — or with an
         :class:`~kopis.common.RpcError` if the owner could not perform
-        the op. If a value in the op cannot be serialized, the op
+        the op: the browser is a single thread, so the call cannot
+        block. If a value in the op cannot be serialized, the op
         raises instead of being sent.
         """
         if kwargs is None:
             kwargs = {}
         if handle._owner_side == self.side and handle._owner_id == self._client_id:
-            fut = aio.Future()
-            aio.run(self._local_op(fut, handle, op, name, args, kwargs))
-            return fut
+            return self._apply_op(handle, op, name, args, kwargs)
         call_id = next(self._next_id)
         self._send(
             {
