@@ -105,17 +105,27 @@ class Kopis(KopisBase):
         ``browser.document`` object)."""
         return document
 
+    @property
+    def window(self) -> Any:
+        """The browser window (the brython ``browser.window``
+        object)."""
+        return window
+
     def __getattr__(self, name: str) -> Any:
         """The element of the document with that id, or — if no element
-        has that id — the short way for ``k.rpc.name``.
+        has that id — the window's ``on<event>`` handler property, if
+        one is set (``k.onload`` after ``k.onload = handler``), or —
+        otherwise — the short way for ``k.rpc.name``.
 
         ``k.btn0`` is the element with id ``"btn0"`` (the same as
         ``k["btn0"]`` / ``k.document["btn0"]``); if no element has that
-        id, ``k.name`` calls a function registered on the other side
-        (the server), as in the base class. The client is the side with
-        the live DOM, so element ids take precedence over RPC names
-        (the server has no live DOM and resolves every name to the RPC
-        call, where it stays a stand-in no-op).
+        id, an ``on<event>`` name reads back the handler of the
+        window's ``on<event>`` property, if one is set, and any other
+        name calls a function registered on the other side (the
+        server), as in the base class. The client is the side with the
+        live DOM, so element ids take precedence over handler names
+        and RPC names (the server has no live DOM and resolves every
+        name to the RPC call, where it stays a stand-in no-op).
 
         Only consulted for names that are not found the usual way, so
         the ``Kopis`` API (``register``, ``rpc``, ``document``, ...)
@@ -126,6 +136,13 @@ class Kopis(KopisBase):
         try:
             return self.document[name]
         except KeyError:
+            if name.startswith("on") and len(name) > 2:
+                try:
+                    handler = getattr(window, name)
+                except AttributeError:
+                    handler = None
+                if handler is not None:
+                    return handler
             return super().__getattr__(name)
 
     def _handle_getattr(self, handle: RPCHandle, name: str) -> Any:

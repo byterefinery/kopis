@@ -57,6 +57,41 @@ This module extends both, once, by monkey-patching the brython
   has the live DOM: the subscripts, the attribute, and ``bind`` /
   ``addEventListener`` all work as described; on the server they are
   stand-in no-ops, as with everything else on the document.)
+- the same coroutine wrapping, for the ``on<event>`` attributes of
+  Javascript objects (the brython ``JSObject`` class, e.g. the
+  ``window``): ``window.on<event> = func`` with a coroutine ``func``
+  is wrapped so that it is started with ``aio.run`` when the event
+  fires. And the window's ``onload`` handler set after the ``load``
+  event has already been dispatched — which is always the case,
+  since brython runs the application code on the ``load`` event — is
+  called at once, with a synthetic ``DOMEvent`` of the ``load`` type,
+  as if the event fired at the binding::
+
+      k.window.onload = window_load       # fires at once
+      k.onload = window_load              # the same, on the app
+- a handler bound to the document's ``DOMContentLoaded`` event after
+  it has already been dispatched is called at once, with a synthetic
+  ``DOMEvent`` of that type — with ``bind`` /
+  ``addEventListener`` on the document (as with
+  ``k.addEventListener``, the short form for
+  ``k.document.addEventListener``), using the event's exact name
+  (there is no ``onDOMContentLoaded`` handler property, so the
+  ``on<event>`` ways do not apply to it): brython runs the
+  application code on the ``load`` event, which comes after
+  ``DOMContentLoaded``, so a listener bound from the app code would
+  never be called otherwise. As the DOM docs recommend for scripts
+  that may run after the event, the decision is made by checking
+  ``document.readyState``: if the event has already been dispatched,
+  the handler is called once (no listener is registered); otherwise
+  the listener is registered as usual. The ``load`` event, by
+  contrast, is a window event — it fires on the window, never on the
+  document — so it is not a document event at all: it is bound on the
+  window (``k.window.onload``, ``k.onload``), not here::
+
+      async def ready(e):
+          ...                                     # runs at once
+
+      k.addEventListener("DOMContentLoaded", ready)
 - ``document.<id>`` gives the element with that id (the attribute way
   for ``document["<id>"]``, the brython subscript): ``document.btn0``
   is the element with id ``"btn0"``. ``document`` gets this by being
@@ -73,8 +108,10 @@ non-coroutine handlers are bound unchanged. As in brython, content
 appended to the document goes to its body.
 """
 
-from browser import DOMNode, aio, document
+from browser import DOMEvent, DOMNode, aio, document, window
+from collections.abc import Callable
 from inspect import iscoroutinefunction
+from typing import Any
 
 __all__ = ["install"]
 
@@ -85,6 +122,55 @@ def _event_name(key: object) -> str | None:
     if isinstance(key, str) and key.startswith("on") and len(key) > 2:
         return key[2:]
     return None
+
+
+# ``DOMContentLoaded`` of the document, once dispatched, never fires
+# again, and brython runs the application code on the ``load`` event
+# — after ``DOMContentLoaded``. A handler bound from app code to it is
+# therefore called at once, with a synthetic event, so that it behaves
+# as if the event fired at the binding. The ``load`` event, by
+# contrast, is a window event: it fires on the window, never on the
+# document (a document listener for it never fires), so it is handled
+# on the window — ``window.onload`` — and never here.
+
+
+def _domcontentloaded_passed() -> bool:
+    """Whether the document's ``DOMContentLoaded`` event has already
+    been dispatched (once the document is no longer loading)."""
+    try:
+        return document.readyState != "loading"
+    except Exception:  # noqa: BLE001 - no live readyState: assume not passed
+        return False
+
+
+def _window_load_passed() -> bool:
+    """Whether the window's ``load`` event has already been dispatched
+    (once the document is complete)."""
+    try:
+        return document.readyState == "complete"
+    except Exception:  # noqa: BLE001 - no live readyState: assume not passed
+        return False
+
+
+def _synthetic_event(event: str) -> DOMEvent:
+    """A ``DOMEvent`` standing in for an event that has already
+    fired."""
+    return DOMEvent(event)
+
+
+def _wrap_async(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Start a coroutine ``func`` with ``aio.run`` when it is called
+    (a plain ``func`` is returned unchanged): in plain brython a
+    coroutine handler would be called, return a coroutine that is
+    never awaited, and never run."""
+    if iscoroutinefunction(func):
+        target = func
+
+        def wrapped(*args: object, **kwargs: object) -> None:
+            aio.run(target(*args, **kwargs))
+
+        return wrapped
+    return func
 
 
 def _is_script(node: object) -> bool:
@@ -136,6 +222,11 @@ def install() -> None:
     _orig_setitem = DOMNode.__setitem__
     _orig_setattr = DOMNode.__setattr__
     _orig_unbind = DOMNode.unbind
+    # The class of the Javascript objects (e.g. the window): brython
+    # dispatches their attribute sets through its ``__setattr__`, so
+    # the same monkey-patch way works for them.
+    _jsobj = type(window)
+    _orig_jsobj_setattr = _jsobj.__setattr__
 
     def attach(self: DOMNode, other: object) -> DOMNode:
         if isinstance(other, str):
@@ -154,13 +245,28 @@ def install() -> None:
         return _orig_le(self, other)
 
     def bind(self: DOMNode, event: str, func=None, options=None) -> object:
-        if func is not None and iscoroutinefunction(func):
-            target = func
-
-            def wrapped(*args: object, **kwargs: object) -> None:
-                aio.run(target(*args, **kwargs))
-
-            func = wrapped
+        if func is None:
+            # The decorator form: the handler is bound when the
+            # decorator is applied, through this function again.
+            return _orig_bind(self, event, func, options)
+        func = _wrap_async(func)
+        # The document's ``DOMContentLoaded`` event, once dispatched,
+        # never fires again — and brython runs the application code on
+        # the ``load`` event, which comes after it: as the DOM docs
+        # recommend for scripts that may run after the event (checking
+        # ``document.readyState``), call the handler once, with a
+        # synthetic event, as if the event fired at the binding.
+        # (The ``load`` event is a window event, not a document event:
+        # it fires on the window, never on the document, so a
+        # document listener for it is registered as usual and never
+        # called for the page load.)
+        if (
+            self is document
+            and event == "DOMContentLoaded"
+            and _domcontentloaded_passed()
+        ):
+            func(_synthetic_event(event))
+            return self
         return _orig_bind(self, event, func, options)
 
     def setitem(self: DOMNode, key: object, value: object) -> None:
@@ -201,7 +307,12 @@ def install() -> None:
         coroutine that is never awaited, and never run. The handler
         itself is the element's native ``on<event>`` handler, as in
         brython (one handler; reading it back gives the handler,
-        ``element.on<event> = None`` removes it)."""
+        ``element.on<event> = None`` removes it). The document has no
+        handler property for ``DOMContentLoaded`` (there is no
+        ``onDOMContentLoaded``), and the ``load`` event is a window
+        event (it fires on the window, never on the document), so
+        ``document.on<event>`` for those remains a plain attribute
+        set, as in brython."""
         if _event_name(attr) is not None and iscoroutinefunction(value):
             target = value
 
@@ -210,6 +321,27 @@ def install() -> None:
 
             value = wrapped
         return _orig_setattr(self, attr, value)
+
+    def jsobj_setattr(self: object, attr: str, value: object) -> None:
+        """Set an attribute of a Javascript object (a brython
+        ``JSObject``, e.g. the ``window``), as in brython — except
+        that a coroutine function set with an ``on<event>`` attribute
+        is wrapped so that it is started with ``aio.run`` when the
+        event fires, and the window's ``onload`` handler set after the
+        ``load`` event has already been dispatched — which is always
+        the case, since brython runs the application code on the
+        ``load`` event — is called at once, with a synthetic event, as
+        if the event fired at the binding."""
+        if _event_name(attr) is not None and iscoroutinefunction(value):
+            value = _wrap_async(value)
+        _orig_jsobj_setattr(self, attr, value)
+        if (
+            self is window
+            and attr == "onload"
+            and callable(value)
+            and _window_load_passed()
+        ):
+            value(_synthetic_event("load"))
 
     class _Document(DOMNode):
         """The brython ``document``, with attribute access by element
@@ -240,6 +372,7 @@ def install() -> None:
     DOMNode.__setitem__ = setitem
     DOMNode.__getitem__ = getitem
     DOMNode.__setattr__ = setattr
+    _jsobj.__setattr__ = jsobj_setattr
     # Give document the attribute-by-id access. A plain
     # ``document.__class__ = _Document`` goes through the patched
     # ``__setattr__`` above and is lost, so the object protocol is used.

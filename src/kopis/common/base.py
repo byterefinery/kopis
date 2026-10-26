@@ -10,6 +10,19 @@ the two sides do the same way:
   ``"brython"`` by default — and :meth:`use`, which attaches them to
   the document head, one by one, as with any other dependency — a
   no-op on the server, where there is no live DOM;
+- :meth:`addEventListener` and :meth:`removeEventListener`, the short
+  forms for ``k.document.addEventListener`` and
+  ``k.document.removeEventListener`` (direct document events) — a
+  no-op on the server, where there is no live DOM;
+- the ``window`` property — the browser window on the client, a
+  stand-in on the server — and the ``on<event>`` namespace of the
+  app: ``k.on<event> = handler`` binds the window's event handler
+  property (``k.onload = handler`` is the same as
+  ``k.window.onload = handler``, and ``k.on<event> = None`` removes
+  it) — the window, not the document, has the handler properties for
+  its events (there is no ``onDOMContentLoaded``), so the
+  ``on<event>`` names never refer to document events — a no-op on
+  the server, where there is no live window;
 - :meth:`register` (the canonical way ``k.rpc.register``, and the
   short way ``k.register``), and the registry of the functions
   registered with it;
@@ -114,6 +127,31 @@ class KopisBase(ABC):
         """
         return self.side == "client"
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Set an attribute of the application — except that an
+        ``on<event>`` name is the window's event handler property for
+        ``<event>``: ``k.onload = handler`` is the same as
+        ``k.window.onload = handler`` (and ``k.onload = None``
+        removes it). The window — not the document — has the handler
+        properties for its events (there is no ``onDOMContentLoaded``),
+        so the ``on<event>`` names of the app never refer to document
+        events. On the client, a coroutine handler is started with
+        ``aio.run`` when the event fires, and the window's ``onload``
+        handler set after the ``load`` event has already been
+        dispatched — which is always the case, since brython runs the
+        application code on that event — is called at once with a
+        synthetic event; on the server the binding is a no-op, as
+        with everything else on the window."""
+        if (
+            not name.startswith("_")
+            and name.startswith("on")
+            and len(name) > 2
+            and (value is None or callable(value))
+        ):
+            self._bind_window_on(name, value)
+            return
+        object.__setattr__(self, name, value)
+
     def __init__(
         self, use: str | list[str] | tuple[str, ...] | None = ("brython",)
     ) -> None:
@@ -143,6 +181,12 @@ class KopisBase(ABC):
     @abstractmethod
     def document(self) -> Any:
         """A live view of the document."""
+
+    @property
+    @abstractmethod
+    def window(self) -> Any:
+        """The window (the brython ``browser.window`` object on the
+        client; a stand-in on the server)."""
 
     def use(self, *names: str) -> Self:
         """Attach client-side dependencies to the document head.
@@ -177,6 +221,44 @@ class KopisBase(ABC):
                 else:
                     head.attach(element)
         return self
+
+    def addEventListener(
+        self, event: str, func: Callable[..., Any], options: Any = None
+    ) -> None:
+        """Bind ``func`` to ``event`` on the document: the short form
+        of ``k.document.addEventListener(event, func, options)``.
+
+        On the client (the live DOM) the binding is real — a coroutine
+        ``func`` is started with ``aio.run`` when the event fires, and
+        the document's ``DOMContentLoaded`` event, which has already
+        been dispatched by then, calls ``func`` at once (the
+        ``load`` event is a window event, not a document event) — see
+        :mod:`kopis.client.dom`. On the server (no live DOM) the
+        binding is a no-op.
+        """
+        self.document.addEventListener(event, func, options)
+
+    def removeEventListener(self, event: str, *funcs: object) -> None:
+        """Remove the handlers ``funcs`` from ``event`` on the document:
+        the short form of ``k.document.removeEventListener(event,
+        *funcs)`` (with no ``funcs``, all handlers of ``event``).
+
+        A no-op on the server (no live DOM).
+        """
+        self.document.removeEventListener(event, *funcs)
+
+    def _bind_window_on(self, name: str, value: Any) -> None:
+        """Bind ``value`` to the window's ``on<event>`` property
+        (``name`` is the ``on<event>`` name; ``None`` removes it).
+
+        On the client the binding goes through the window's
+        ``__setattr__`` extension (see :mod:`kopis.client.dom`): a
+        coroutine is started with ``aio.run`` when the event fires,
+        and an ``onload`` handler set after the ``load`` event has
+        already been dispatched is called at once. On the server the
+        window is a stand-in, so the binding is a no-op.
+        """
+        setattr(self.window, name, value)
 
     def __getitem__(self, key: object) -> Any:
         """The element of the document with that id: ``k["btn0"]`` is

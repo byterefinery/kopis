@@ -239,6 +239,13 @@ class Kopis(KopisBase):
         so DOM operations on it succeed but do nothing)."""
         return browser.document
 
+    @property
+    def window(self) -> Any:
+        """A stand-in of the brython ``browser.window`` object (there
+        is no live window on the server, so operations on it succeed
+        but do nothing)."""
+        return browser.window
+
     @document.setter
     def document(self, value: str) -> None:
         self._document = value
