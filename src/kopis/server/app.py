@@ -19,7 +19,7 @@ browser — ``document <= ...``, ``document.createElement``,
 ``bind``, and friends all succeed — but nothing is rendered or fired:
 the browser does all that by running the same code under Brython.
 
-By default (``use="brython"``), the app runs client-side Python code
+By default (``use=["brython"]``), the app runs client-side Python code
 with `Brython <https://brython.info>`_: the Brython scripts and the
 modules of the ``kopis`` package are served, a default document is
 created when the root has no ``index.html`` and ``k.document`` is never
@@ -72,7 +72,7 @@ from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 
-from ..common import KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
+from ..common import KopisBase, RPCHandle, RpcError, USES, WS_PATH, decode, encode
 from . import browser
 
 __all__ = ["Kopis"]
@@ -164,7 +164,7 @@ class Kopis(KopisBase):
     def __init__(
         self,
         root: str | Path | None = None,
-        use: str | None = "brython",
+        use: str | list[str] | tuple[str, ...] | None = ("brython"),
     ) -> None:
         super().__init__(use)
 
@@ -175,7 +175,7 @@ class Kopis(KopisBase):
             self.root = entry.parent if entry is not None else Path.cwd()
 
         self._entry = _entry_script()
-        self._brython = self.use == "brython"
+        self._brython = "brython" in self._use
         self._document: str | None = None  # the HTML assigned to k.document
         self._served: str | None = None  # cache of the document served at /
 
@@ -290,10 +290,7 @@ class Kopis(KopisBase):
         Brython on the live DOM it builds, so the served document must
         carry the scripts; the server itself never parses the document.
         """
-        head_scripts = (
-            '<script type="text/javascript" src="brython.js"></script>'
-            '<script type="text/javascript" src="brython_stdlib.js"></script>'
-        )
+        head_scripts = USES["brython"]
         body_scripts = ""
         entry = self._entry
         if entry is not None and entry.is_file():
@@ -329,7 +326,7 @@ class Kopis(KopisBase):
         resolves). The served document is annotated with the Brython
         scripts and the app entry script by :meth:`_annotate`.
         """
-        import brython  # Optional dependency, required only for use="brython".
+        import brython  # Optional dependency, required only when "brython" is used.
 
         # Serve the brython scripts from where the package installed them.
         brython_path = Path(brython.__file__).parent

@@ -79,7 +79,9 @@ class Kopis(KopisBase):
     side = "client"
 
     def __init__(
-        self, root: str | Path | None = None, use: str | None = "brython"
+        self,
+        root: str | Path | None = None,
+        use: str | list[str] | tuple[str, ...] | None = ("brython"),
     ) -> None:
         super().__init__(use)
         self._pending: dict[int, Any] = {}  # call id -> future of a client call

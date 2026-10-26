@@ -5,7 +5,7 @@ and serves a web application — a root directory of static files, an HTML
 document at ``/``, and RPC to and from clients. It shares its API with
 the client-side half (the ``kopis.client`` subpackage, which runs in the
 browser under Brython); only the implementations differ. By default
-(``use="brython"``), the whole package is served to the browser and the
+(``use=["brython"]``), the whole package is served to the browser and the
 running script is attached to the document, so ``import kopis`` in
 browser code resolves to the client side there.
 

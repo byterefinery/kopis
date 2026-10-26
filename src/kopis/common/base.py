@@ -5,7 +5,11 @@ The server-side ``Kopis`` (``kopis.server``) and the client-side
 implement its abstract methods. The base class implements everything
 the two sides do the same way:
 
-- validation of the ``use`` argument;
+- the ``use`` argument of the constructor — the client-side
+  dependencies the app uses (:data:`~kopis.common.uses.USES`),
+  ``"brython"`` by default — and :meth:`use`, which attaches them to
+  the document head, one by one, as with any other dependency — a
+  no-op on the server, where there is no live DOM;
 - :meth:`register` (the canonical way ``k.rpc.register``, and the
   short way ``k.register``), and the registry of the functions
   registered with it;
@@ -31,9 +35,10 @@ from collections.abc import Callable, Mapping, Sequence
 from inspect import iscoroutine
 from itertools import count
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from .handle import RPCHandle, _HandleAttr
+from .uses import USES
 from .wire import RpcError
 
 __all__ = ["KopisBase"]
@@ -109,10 +114,16 @@ class KopisBase(ABC):
         """
         return self.side == "client"
 
-    def __init__(self, use: str | None = "brython") -> None:
-        if use not in (None, "brython"):
-            raise ValueError(f"unknown value for use: {use!r}")
-        self.use = use
+    def __init__(
+        self, use: str | list[str] | tuple[str, ...] | None = ("brython",)
+    ) -> None:
+        # The client-side dependencies the app uses (a string, a list
+        # or tuple of strings, or None for none); ``"brython"`` by
+        # default, as with any other dependency in
+        # :data:`~kopis.common.uses.USES`.
+        self._use: list[str] = (
+            [] if use is None else [use] if isinstance(use, str) else list(use)
+        )
         self._bound: dict[str, Callable[..., Any]] = {}
         self.rpc = _Rpc(self)
         # The live objects this side keeps for values it could not
@@ -123,6 +134,8 @@ class KopisBase(ABC):
         self._owner_id: str | None = (
             None  # this side's identity in the handles it makes
         )
+        # The dependencies of the constructor, as with k.use(...).
+        self.use(*self._use)
 
     # -- unified API ------------------------------------------------------
 
@@ -130,6 +143,40 @@ class KopisBase(ABC):
     @abstractmethod
     def document(self) -> Any:
         """A live view of the document."""
+
+    def use(self, *names: str) -> Self:
+        """Attach client-side dependencies to the document head.
+
+        Each ``name`` is a short name from :data:`~kopis.common.uses.USES`
+        (e.g. ``"brython"``, ``"alpinejs"``, ``"lodash"``); the
+        dependency's ``<script>`` and ``<link>`` elements are attached
+        to the document head, in order, each at most once — an element
+        whose URL is already in the head is skipped, so a dependency
+        shared between names (the Tailwind browser build behind
+        ``"tailwindcss"`` and ``"daisyui"``) is loaded only once. Unknown
+        names raise ``KeyError``. A no-op on the server (no live DOM):
+        when the same code runs in the browser, the client does the
+        real work. The constructor's ``use`` argument works the same
+        way — a string or a list of strings, ``["brython"]`` by
+        default — and applies each of them with this method.
+        """
+        for name in names:
+            if name not in USES:
+                known = ", ".join(f"{n!r}" for n in sorted(USES))
+                raise KeyError(f"unknown use {name!r} (known: {known})")
+        if self.is_server():
+            return self
+        head = self.document.head
+        for name in names:
+            for element in self.parse_html(USES[name]):
+                tag = element.tagName  # 'SCRIPT' or 'LINK'
+                url = element.src if tag == "SCRIPT" else element.href
+                for other in head.getElementsByTagName(tag.lower()):
+                    if (other.src if tag == "SCRIPT" else other.href) == url:
+                        break  # already in the head (a shared dependency)
+                else:
+                    head.attach(element)
+        return self
 
     def __getitem__(self, key: object) -> Any:
         """The element of the document with that id: ``k["btn0"]`` is
