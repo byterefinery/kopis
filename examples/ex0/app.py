@@ -17,49 +17,15 @@ k = Kopis()
 #     <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
 #     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 #     <link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" rel="stylesheet" type="text/css" />
-#
-#     <script src="https://cdn.jsdelivr.net/npm/lodash@4.18.1/lodash.min.js"></script>
-# """)
-
-# k.document.head.attach("""
-#     <script src="https://cdn.jsdelivr.net/npm/brython@3/brython.min.js"></script>
-#     <script src="https://cdn.jsdelivr.net/npm/brython@3/brython_stdlib.js"></script>
 # """)
 k.use("brython")
-
-# k.document.head.attach("""
-#     <script src="//unpkg.com/alpinejs" defer></script>
-#     <script src="https://cdn.jsdelivr.net/npm/pinecone-router@7.6.0/dist/router.min.js"></script>
-# """)
+# k.use("alpinejs", "pinecone-router")
 k.use("alpinejs")
-
-# k.document.head.attach("""
-#     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-# """)
 k.use("tailwindcss")
-
-# k.document.head.attach("""
-#     <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
-#     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-#     <link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" rel="stylesheet" type="text/css" />
-# """)
 k.use("daisyui")
-
-# k.document.head.attach("""
-#     <script src="https://cdn.jsdelivr.net/npm/lodash@4.18.1/lodash.min.js"></script>
-# """)
 k.use("lodash")
-
-# k.document.head.attach("""
-#     <script src="https://unpkg.com/axios@1.20.0/dist/axios.min.js"></script>
-# """)
 k.use("axios")
-
-# k.document.head.attach("""
-#    <link rel="stylesheet" href="https://unpkg.com/@knadh/oat/oat.min.css">
-#    <script src="https://unpkg.com/@knadh/oat/oat.min.js" defer></script>
-# """)
-k.use("oat")
+# k.use("oat")
 
 k.document.documentElement.setAttribute("data-theme", "dark")
 

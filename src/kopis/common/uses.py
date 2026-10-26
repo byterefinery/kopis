@@ -19,7 +19,10 @@ USES: dict[str, str] = {
     "brython": (
         '<script src="/brython.js"></script><script src="/brython_stdlib.js"></script>'
     ),
-    "alpinejs": '<script src="//unpkg.com/alpinejs" defer></script>',
+    "alpinejs": ('<script src="//unpkg.com/alpinejs" defer></script>'),
+    "pinecone-router": (
+        '<script src="https://cdn.jsdelivr.net/npm/pinecone-router@7.6.0/dist/router.min.js"></script>'
+    ),
     "tailwindcss": (
         '<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>'
     ),
