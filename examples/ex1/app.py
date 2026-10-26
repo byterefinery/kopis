@@ -36,22 +36,10 @@ async def btn0_click(e: DOMEvent):
 k.btn0.onclick = btn0_click
 
 
-async def document_DOMContentLoaded(e: DOMEvent):
-    print("document_DOMContentLoaded", e)
-    k.btn0.innerHTML = await k.get_count()
-
-
-async def document_load(e: DOMEvent):
-    print("document_load", e)
-    k.btn0.innerHTML = await k.get_count()
-
-
 async def window_load(e: DOMEvent):
     print("window_load", e)
     k.btn0.innerHTML = await k.get_count()
 
 
-# k.document.addEventListener("DOMContentLoaded", document_DOMContentLoaded)
-k.window.onload = window_load
 k.onload = window_load
 k.run()
