@@ -10,12 +10,17 @@ This module extends both, once, by monkey-patching the brython
 :mod:`kopis.client` is imported; pure Python, no Javascript):
 
 - a string appended with ``<=`` or with ``attach`` is first parsed by
-  the browser as an HTML fragment (nothing is executed), and the
-  fragment's top-level nodes — elements, text, and comments — are
-  appended, in order. A string without markup still appends a text
-  node, so plain text keeps working as before. The native ``append``
-  method is left untouched (a string appended with it is a text node,
-  as in plain brython);
+  the browser as an HTML fragment, and the fragment's top-level nodes
+  — elements, text, and comments — are appended, in order. A string
+  without markup still appends a text node, so plain text keeps working
+  as before. A ``<script>`` among them (or a script element appended
+  directly with ``<=`` or ``attach``) is recreated as a fresh script
+  element with the same attributes and text, so that it runs when it
+  is inserted: a script moved out of a parsed fragment keeps the
+  browser's "already started" mark and would never execute, while a
+  freshly created script runs. The native ``append`` method is left
+  untouched (a string appended with it is a text node, as in plain
+  brython);
 - a coroutine function passed to ``bind``, to ``addEventListener`` (or
   to the ``browser.bind`` decorator, which goes through them) is
   started with ``aio.run`` when the event fires, so ``await`` works
@@ -82,15 +87,39 @@ def _event_name(key: object) -> str | None:
     return None
 
 
+def _is_script(node: object) -> bool:
+    """Whether ``node`` is a ``<script>`` element."""
+    return isinstance(node, DOMNode) and getattr(node, "tagName", None) == "SCRIPT"
+
+
+def _runnable_script(node: DOMNode) -> DOMNode:
+    """A fresh script element with the attributes and text of ``node``.
+
+    A ``<script>`` moved out of a parsed fragment (a ``<template>``) or
+    built with the ``browser.html`` classes carries the browser's
+    "already started" mark and never executes when it is inserted into
+    the live document; a script created with ``document.createElement``
+    does run when inserted, so the script is recreated before it is
+    attached."""
+    fresh = document.createElement("script")
+    for name, value in node.attrs.items():
+        fresh.attrs[name] = value
+    fresh.text = node.text
+    return fresh
+
+
 def _append_fragment(self: DOMNode, html_str: str) -> DOMNode:
     """Append the top-level nodes of the HTML fragment ``html_str``
-    (parsed by the browser; nothing is executed), in order."""
+    (parsed by the browser), in order; a top-level ``<script>`` among
+    them is recreated, so that it runs when it is inserted."""
     tpl = document.createElement("template")
     tpl.innerHTML = html_str
     # A document node cannot take element children directly; brython's
     # own attach puts them in the body.
     target = self.body if self is document else self
     for node in list(tpl.content):
+        if _is_script(node):
+            node = _runnable_script(node)
         target.appendChild(node)
     return self
 
@@ -112,12 +141,16 @@ def install() -> None:
         if isinstance(other, str):
             return _append_fragment(self, other)
         target = self.body if self is document else self
+        if _is_script(other):
+            other = _runnable_script(other)
         target.appendChild(other)
         return self
 
     def le(self: DOMNode, other: object) -> DOMNode:
         if isinstance(other, str):
             return _append_fragment(self, other)
+        if _is_script(other):
+            other = _runnable_script(other)
         return _orig_le(self, other)
 
     def bind(self: DOMNode, event: str, func=None, options=None) -> object:

@@ -11,6 +11,16 @@ elif IS_CLIENT:
 
 k = Kopis()
 
+k.document.head.attach("""
+    <script src="//unpkg.com/alpinejs" defer></script>
+
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" rel="stylesheet" type="text/css" />
+""")
+
+k.document.documentElement.setAttribute('data-theme', 'dark')
+
 
 if k.is_server():
     print("server 2")
@@ -74,7 +84,7 @@ async def btn0_click(e: DOMEvent):
 k.document.body.attach("""
     Hello 4 !
 
-    <button id="btn0">Demo</button>
+    <button id="btn0" class="btn btn-primary">Demo</button>
 """)
 
 k.btn0.onclick = btn0_click
