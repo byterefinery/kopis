@@ -35,11 +35,32 @@ Developers import the brython objects from ``kopis``, never from
 ``browser`` or ``javascript`` directly: the names above are the unified
 interface, resolved to the brython built-ins in the browser and to the
 server stand-ins under CPython.
+
+The side of the web stack the code is running on is indicated by the
+module constants :data:`IS_SERVER` and :data:`IS_CLIENT` (and, on the
+application itself, by :meth:`Kopis.is_server` and
+:meth:`Kopis.is_client`), which let app code take a side-specific
+branch at import time, before the ``Kopis`` instance exists::
+
+    if IS_SERVER:
+        import os
+    elif IS_CLIENT:
+        import sys
 """
 
 import platform
 
+#: ``True`` when this ``kopis`` is running on the server side (CPython)
+#: and a web server is available; ``False`` in the browser (Brython).
+IS_SERVER: bool = platform.python_implementation() != "Brython"
+
+#: ``True`` when this ``kopis`` is running on the client side (Brython,
+#: in the browser); ``False`` under CPython.
+IS_CLIENT: bool = not IS_SERVER
+
 __all__ = [
+    "IS_CLIENT",
+    "IS_SERVER",
     "DOMEvent",
     "DOMNode",
     "Kopis",
@@ -55,7 +76,7 @@ __all__ = [
     "window",
 ]
 
-if platform.python_implementation() == "Brython":
+if IS_CLIENT:
     # Client side: running in the browser under Brython. The brython
     # built-ins are re-exported under the unified names.
     from .client import (

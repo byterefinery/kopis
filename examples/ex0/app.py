@@ -1,7 +1,23 @@
-from kopis import Kopis, DOMEvent, RPCHandle
+from kopis import Kopis, DOMEvent, RPCHandle, IS_SERVER, IS_CLIENT
+
+
+if IS_SERVER:
+    print("server 1")
+    import os
+elif IS_CLIENT:
+    print("client 1")
+    import sys
 
 
 k = Kopis()
+
+
+if k.is_server():
+    print("server 2")
+    import sys  # noqa: F401 - demo of a side-specific import
+elif k.is_client():
+    print("client 2")
+    import os  # noqa: F401 - demo of a side-specific import
 
 
 class Point:

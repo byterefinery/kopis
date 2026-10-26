@@ -89,6 +89,26 @@ class KopisBase(ABC):
     #: Name of this side of the wire, used in error messages.
     side: str
 
+    def is_server(self) -> bool:
+        """Whether this ``Kopis`` runs on the server side (CPython).
+
+        The side of the web stack this instance is running on — the
+        instance-level companion of the module constant
+        :data:`~kopis.IS_SERVER` (the two always agree), usable once the
+        application object exists, before any request or event.
+        """
+        return self.side == "server"
+
+    def is_client(self) -> bool:
+        """Whether this ``Kopis`` runs on the client side (Brython, in
+        the browser).
+
+        The instance-level companion of the module constant
+        :data:`~kopis.IS_CLIENT` (the two always agree), usable once the
+        application object exists, before any request or event.
+        """
+        return self.side == "client"
+
     def __init__(self, use: str | None = "brython") -> None:
         if use not in (None, "brython"):
             raise ValueError(f"unknown value for use: {use!r}")
