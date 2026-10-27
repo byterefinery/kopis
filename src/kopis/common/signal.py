@@ -1,12 +1,17 @@
-"""``signal`` — a single value with a getter and a setter, in the spirit
+"""``Signal`` — a single value with a getter and a setter, in the spirit
 of solidjs signals.
 
 solidjs's ``createSignal(initial)`` returns a pair of functions — a
 getter and a setter — through which one value is read and updated. This
 is the same primitive, in pure Python, so it runs unmodified on both
 sides of the web stack (the server, under CPython, and the client, under
-Brython): a signal created at the module level of an application is a
-signal on each side, holding that side's value.
+Brython): a signal created in an application is a signal on each side,
+holding that side's value.
+
+A :class:`Signal` unpacks to its getter and setter::
+
+    signal = Signal(0)
+    get_count, set_count = signal
 
 The getter is a function in its own right, not a bound method of an
 object: it can be registered with :meth:`~kopis.common.KopisBase.register`
@@ -15,7 +20,8 @@ solidjs shape — its ``__name__`` is the name you bound it to in your
 code, resolved from the caller's scope when it is read (see
 :func:`_bound_name`). So::
 
-    get_count, set_count = signal(0)
+    signal = Signal(0)
+    get_count, set_count = signal
 
     get_count = k.register(get_count)     # registered under "get_count",
                                            # the name it is bound to
@@ -38,11 +44,14 @@ explicit :class:`~kopis.common.RPCHandle` (``k.get_handle``) if it
 should.
 """
 
+from __future__ import annotations
+
 import sys
+from collections.abc import Callable, Iterator
 from pickle import PicklingError
 from typing import Any, NoReturn
 
-__all__ = ["signal"]
+__all__ = ["Signal"]
 
 #: How far up the stack :func:`_bound_name` looks for the name the object
 #: is bound to (a search that goes past the application's own frames is
@@ -98,14 +107,31 @@ class _SignalSetter:
 
     _cell: list[Any]
     _fallback_name: str
+    _signal: Signal
+    _on_change: Callable[[Signal, Any], Any] | None
 
-    def __init__(self, cell: list[Any], fallback_name: str) -> None:
+    def __init__(
+        self,
+        cell: list[Any],
+        fallback_name: str,
+        signal: Signal,
+        on_change: Callable[[Signal, Any], Any] | None = None,
+    ) -> None:
         object.__setattr__(self, "_cell", cell)
         object.__setattr__(self, "_fallback_name", fallback_name)
+        object.__setattr__(self, "_signal", signal)
+        object.__setattr__(self, "_on_change", on_change)
 
     def __call__(self, value: Any) -> None:
-        """Update the signal's value to ``value``."""
+        """Update the signal's value to ``value``.
+
+        If the signal was given an ``on_change`` callback, it is called
+        with the signal and ``value`` after the update.
+        """
         self._cell[0] = value
+        on_change = self._on_change
+        if on_change is not None:
+            on_change(self._signal, value)
 
     @property
     def __name__(self) -> str:
@@ -128,7 +154,7 @@ def _bound_name(obj: object, fallback: str) -> str:
 
     A signal's getter and setter have no names of their own; the names
     the developer gives them by binding (``get_count, set_count =
-    signal(0)``) are their names. Reading ``__name__`` therefore walks
+    signal``) are their names. Reading ``__name__`` therefore walks
     up the stack from the reader's caller — the reader itself, e.g.
     ``Kopis.register``, is inside the ``kopis`` package and is skipped,
     as are all the other ``kopis`` frames — and returns the first local
@@ -182,18 +208,27 @@ def _bound_name(obj: object, fallback: str) -> str:
     return fallback
 
 
-def signal(value: Any) -> tuple[_SignalGetter, _SignalSetter]:
-    """Create a signal: a single value with a getter and a setter, in
-    the spirit of solidjs signals (its ``createSignal`` returns the same
-    pair).
+class Signal:
+    """A single value with a getter and a setter, in the spirit of
+    solidjs signals (its ``createSignal`` returns the same pair).
 
-    The pair is a 2-tuple, so the natural form is::
+    A :class:`Signal` unpacks to the pair::
 
-        get_count, set_count = signal(0)
+        signal = Signal(0)
+        get_count, set_count = signal
 
     ``get_count()`` returns the signal's current value, and
     ``set_count(new_value)`` updates it. Both work the same way on both
     sides of the web stack.
+
+    ``on_change`` is optional: when given, it is called with the signal
+    and the new value on every update of the signal::
+
+        def count_changed(signal: Signal, new_value: int):
+            print("count_changed", new_value)
+
+        signal = Signal(0, count_changed)
+        get_count, set_count = signal
 
     The getter is a first-class function: it can be registered with
     ``k.register`` and called from the other side over RPC, and its
@@ -203,5 +238,38 @@ def signal(value: Any) -> tuple[_SignalGetter, _SignalSetter]:
     (as with any registered function, the RPC name is the function's
     ``__name__``).
     """
-    cell: list[Any] = [value]
-    return _SignalGetter(cell, "get"), _SignalSetter(cell, "set")
+
+    _cell: list[Any]
+    _getter: _SignalGetter
+    _setter: _SignalSetter
+
+    def __init__(
+        self,
+        value: Any,
+        on_change: Callable[[Signal, Any], Any] | None = None,
+    ) -> None:
+        cell: list[Any] = [value]
+        object.__setattr__(self, "_cell", cell)
+        object.__setattr__(self, "_getter", _SignalGetter(cell, "get"))
+        object.__setattr__(
+            self,
+            "_setter",
+            _SignalSetter(cell, "set", self, on_change),
+        )
+
+    def __iter__(self) -> Iterator[Any]:
+        """The getter and the setter, in that order (so the pair can be
+        unpacked::
+
+            get_count, set_count = signal
+
+        ``get_count`` is a :class:`_SignalGetter` (call it for the value)
+        and ``set_count`` a :class:`_SignalSetter` (call it with a value);
+        the element type is left as ``Any`` because the two halves are
+        different callables).
+        """
+        yield self._getter
+        yield self._setter
+
+    def __repr__(self) -> str:
+        return f"<Signal {self._cell[0]!r}>"

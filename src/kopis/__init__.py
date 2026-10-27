@@ -16,7 +16,7 @@ the running Python implementation:
 and to the client side in browser code. Both sides expose the same
 unified API — ``Kopis`` (with ``register``, ``rpc``, ``document``,
 ``html``, ``add_static_file``, ``parse_html``, and ``run``), the
-``signal`` primitive, and the brython objects ``document``,
+``Signal`` class, and the brython objects ``document``,
 ``DOMNode``, ``DOMEvent``, ``bind``, ``html``, ``aio``, ``ajax``,
 ``timer``, ``window``, and ``javascript`` — so a single application file
 can run unmodified on both sides; only the implementations differ
@@ -66,13 +66,13 @@ __all__ = [
     "Kopis",
     "RPCHandle",
     "RpcError",
+    "Signal",
     "aio",
     "ajax",
     "bind",
     "document",
     "html",
     "javascript",
-    "signal",
     "timer",
     "window",
 ]
@@ -92,7 +92,7 @@ if IS_CLIENT:
         document,
         html,
         javascript,
-        signal,
+        Signal,
         timer,
         window,
     )
@@ -111,7 +111,7 @@ else:
         document,
         html,
         javascript,
-        signal,
+        Signal,
         timer,
         window,
     )

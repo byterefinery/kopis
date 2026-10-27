@@ -1,4 +1,4 @@
-from kopis import Kopis, DOMEvent, signal
+from kopis import Kopis, DOMEvent, Signal
 
 
 k = Kopis()
@@ -18,16 +18,21 @@ with k.document.body:
         k.html.text("Demo 1")
 
 
-get_count, set_count = signal(0)
-get_count = k.register(get_count)
+def count_changed(signal: Signal, new_value: int):
+    print("count_changed", new_value)
 
 
-@k.register
-async def inc_count():
-    count = get_count()
-    count += 1
-    set_count(count)
-    return count
+if k.is_server():
+    signal = Signal(0, count_changed)
+    get_count, set_count = signal
+    get_count = k.register(get_count)
+
+    @k.register
+    async def inc_count():
+        count = get_count()
+        count += 1
+        set_count(count)
+        return count
 
 
 @k.window.onload

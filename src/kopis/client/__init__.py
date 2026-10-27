@@ -34,7 +34,7 @@ import javascript
 
 from .app import Kopis
 from .dom import install as _install_dom
-from ..common import RPCHandle, RpcError, signal
+from ..common import RPCHandle, RpcError, Signal
 
 __all__ = [
     "DOMEvent",
@@ -42,13 +42,13 @@ __all__ = [
     "Kopis",
     "RPCHandle",
     "RpcError",
+    "Signal",
     "aio",
     "ajax",
     "bind",
     "document",
     "html",
     "javascript",
-    "signal",
     "timer",
     "window",
 ]

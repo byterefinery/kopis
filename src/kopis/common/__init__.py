@@ -8,7 +8,7 @@ RPC wire format (:mod:`~kopis.common.wire`), the ``Kopis`` base class
 (:mod:`~kopis.common.base`), the ``RPCHandle`` type
 (:mod:`~kopis.common.handle`), which stands in for a value that cannot
 be serialized — the live object stays on the side where it is, and the
-other side operates on it through the handle — the ``signal`` primitive
+other side operates on it through the handle — the ``Signal`` class
 (:mod:`~kopis.common.signal`), a single value with a getter and a
 setter, in the spirit of solidjs signals — the client-side dependencies
 for ``k.use`` (:mod:`~kopis.common.uses`), and the ``Magic`` dummy
@@ -20,7 +20,7 @@ of.
 from .base import KopisBase
 from .handle import RPCHandle
 from .magic import Magic
-from .signal import signal
+from .signal import Signal
 from .uses import USES
 from .wire import RpcError, WS_PATH, decode, encode
 
@@ -31,7 +31,7 @@ __all__ = [
     "Magic",
     "RPCHandle",
     "RpcError",
+    "Signal",
     "decode",
     "encode",
-    "signal",
 ]
