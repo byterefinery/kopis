@@ -23,6 +23,8 @@ the two sides do the same way:
   its events (there is no ``onDOMContentLoaded``), so the
   ``on<event>`` names never refer to document events — a no-op on
   the server, where there is no live window;
+- the ``html`` property — the ``browser.html`` builder on the client,
+  a stand-in on the server;
 - :meth:`register` (the canonical way ``k.rpc.register``, and the
   short way ``k.register``), and the registry of the functions
   registered with it;
@@ -225,6 +227,12 @@ class KopisBase(ABC):
     @abstractmethod
     def window(self) -> Any:
         """The window (the brython ``browser.window`` object on the
+        client; a stand-in on the server)."""
+
+    @property
+    @abstractmethod
+    def html(self) -> Any:
+        """The ``browser.html`` builder (the brython module on the
         client; a stand-in on the server)."""
 
     def use(self, *names: str) -> Self:

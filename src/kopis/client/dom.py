@@ -128,6 +128,33 @@ This module extends both, once, by monkey-patching the brython
   a real document property (``document.body``, ``document.title``, ...)
   still resolves as in brython, and an id with no element raises
   ``AttributeError``, as in brython.
+- the ``with element:`` block form: entering a ``with`` block appends
+  the block's element to the innermost enclosing block element (if
+  any), and while the block is active, every element or text node
+  created in it — a ``browser.html`` tag call, ``html.text``, or any
+  ``document.createElement`` / ``document.createTextNode`` — is
+  appended to the block's element as it is created, so an indented
+  block of element creation builds the corresponding fragment::
+
+      with document.body:
+          with html.BUTTON(id="btn0", class_="btn btn-primary"):
+              html.text("Demo 1")
+
+      # is the same as
+
+      document.body.attach(
+          '<button id="btn0" class="btn btn-primary">Demo 1</button>')
+
+  (On the server the block and the tag calls are stand-in no-ops, as
+  with everything else on the document.)
+- the ``browser.html`` builder, three additions: a tag name the
+  module does not define resolves to its class (``html.button`` is
+  ``html.BUTTON``); ``html.text(s)`` makes a text node (the
+  ``document.createTextNode`` way, appended to the innermost
+  ``with element:`` block element if a block is active); and the
+  ``class_`` keyword argument of a tag call is mapped to the
+  ``class`` attribute (``class`` is a Python keyword, as in brython's
+  ``Class``).
 
 Nothing else about the DOM changes: ``+`` still groups (a string
 grouped with ``+`` is still a text node), ``del`` still removes, and
@@ -135,7 +162,7 @@ non-coroutine handlers are bound unchanged. As in brython, content
 appended to the document goes to its body.
 """
 
-from browser import DOMEvent, DOMNode, aio, document, window
+from browser import DOMEvent, DOMNode, aio, document, html, window
 from collections.abc import Callable, Iterator
 from inspect import iscoroutinefunction
 from typing import Any
@@ -143,6 +170,14 @@ from typing import Any
 from ..common.magic import _event_name, _on_decorator
 
 __all__ = ["install"]
+
+# The stack of the active ``with element:`` blocks (innermost last):
+# entering a block appends the block's element to the innermost
+# enclosing block element (if any), and nodes created while a block is
+# active (a ``browser.html`` tag call, ``html.text``, or any
+# ``document.createElement`` / ``document.createTextNode``) are appended
+# to the block's element.
+_scope: list[DOMNode] = []
 
 
 class _StandIn:
@@ -428,6 +463,68 @@ def install() -> None:
         ):
             value(_synthetic_event("load"))
 
+    def enter(self: DOMNode) -> DOMNode:
+        """Enter a ``with element:`` block: append ``self`` to the
+        innermost enclosing block element (if any), and make ``self``
+        the innermost block element, so that the nodes created in the
+        block's body are appended to it (see the module docstring)."""
+        if _scope:
+            _scope[-1] <= self
+        _scope.append(self)
+        return self
+
+    def exit(self: DOMNode, *exc_info: object) -> bool:
+        """Leave a ``with element:`` block: ``self`` is no longer the
+        innermost block element. Exceptions are not suppressed."""
+        if _scope and _scope[-1] is self:
+            _scope.pop()
+        return False
+
+    _orig_create_element = document.createElement
+
+    def create_element(tag: str, *args: object) -> DOMNode:
+        """Create an element (the brython
+        ``document.createElement``), appended to the innermost
+        ``with element:`` block element if a block is active."""
+        element = _orig_create_element(tag, *args)
+        if _scope:
+            _scope[-1] <= element
+        return element
+
+    _orig_create_text_node = document.createTextNode
+
+    def create_text_node(text: str) -> DOMNode:
+        """Create a text node (the brython
+        ``document.createTextNode``), appended to the innermost
+        ``with element:`` block element if a block is active."""
+        node = _orig_create_text_node(str(text))
+        if _scope:
+            _scope[-1] <= node
+        return node
+
+    _orig_attribute_mapper = html.attribute_mapper
+
+    def attribute_mapper(attr: str) -> str:
+        """Map a tag-call keyword argument to an attribute name (the
+        brython ``html.attribute_mapper``), except that the ``class_``
+        keyword workaround (``class`` is a Python keyword) is mapped
+        to the ``class`` attribute, as brython's ``Class``.
+        """
+        if attr == "class_":
+            return "class"
+        return _orig_attribute_mapper(attr)
+
+    def html_getattr(name: str) -> Any:
+        """The ``browser.html`` module's attribute fallback: a tag name
+        the module does not define (e.g. the lowercase ``html.button``)
+        resolves to its class (``html.BUTTON``), if it has one."""
+        if not isinstance(name, str) or name.startswith("_"):
+            raise AttributeError(name)
+        tag = html.tags.get(name.upper())
+        if tag is not None:
+            return tag
+        raise AttributeError(name)
+
     class _Document(DOMNode):
         """The brython ``document``, with attribute access by element
         id: ``document.btn0`` is the element with id ``"btn0"`` (the
@@ -457,6 +554,13 @@ def install() -> None:
     DOMNode.__setitem__ = setitem
     DOMNode.__getitem__ = getitem
     DOMNode.__setattr__ = setattr
+    DOMNode.__enter__ = enter
+    DOMNode.__exit__ = exit
+    document.createElement = create_element
+    document.createTextNode = create_text_node
+    html.attribute_mapper = attribute_mapper
+    html.text = create_text_node
+    html.__getattr__ = html_getattr
     _jsobj.__setattr__ = jsobj_setattr
     # Give document the attribute-by-id access. A plain
     # ``document.__class__ = _Document`` goes through the patched

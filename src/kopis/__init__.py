@@ -15,8 +15,8 @@ the running Python implementation:
 ``import kopis`` therefore resolves to the server side in CPython code
 and to the client side in browser code. Both sides expose the same
 unified API — ``Kopis`` (with ``register``, ``rpc``, ``document``,
-``add_static_file``, ``parse_html``, and ``run``), and the brython
-objects ``document``,
+``html``, ``add_static_file``, ``parse_html``, and ``run``) and the
+brython objects ``document``,
 ``DOMNode``, ``DOMEvent``, ``bind``, ``html``, ``aio``, ``ajax``,
 ``timer``, ``window``, and ``javascript`` — so a single application file
 can run unmodified on both sides; only the implementations differ

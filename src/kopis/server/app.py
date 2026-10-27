@@ -246,6 +246,13 @@ class Kopis(KopisBase):
         but do nothing)."""
         return browser.window
 
+    @property
+    def html(self) -> browser._Html:
+        """A stand-in of the brython ``browser.html`` builder (there is
+        no live DOM on the server, so tag calls make stand-in
+        elements that are never rendered)."""
+        return browser.html
+
     @document.setter
     def document(self, value: str) -> None:
         self._document = value

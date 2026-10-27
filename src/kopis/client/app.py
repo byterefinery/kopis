@@ -18,7 +18,7 @@ from inspect import iscoroutine
 from pathlib import Path
 from typing import Any
 
-from browser import DOMNode, aio, document, window, websocket
+from browser import DOMNode, aio, document, html, window, websocket
 
 from ..common import KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
 from ..common.handle import _HandleAttr
@@ -123,6 +123,12 @@ class Kopis(KopisBase):
             view = _StandIn(window)
             self._window_view = view
         return view
+
+    @property
+    def html(self) -> Any:
+        """The brython ``browser.html`` builder (the maker of the live
+        DOM elements)."""
+        return html
 
     def __getattr__(self, name: str) -> Any:
         """The element of the document with that id, or — if no element
