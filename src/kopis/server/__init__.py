@@ -24,9 +24,10 @@ rendered or fired.
 from . import aio, javascript
 from .app import Kopis
 from .browser import DOMEvent, DOMNode, ajax, bind, document, html, timer, window
-from ..common import RPCHandle, RpcError, Signal
+from ..common import Client, RPCHandle, RpcError, Signal
 
 __all__ = [
+    "Client",
     "DOMEvent",
     "DOMNode",
     "Kopis",

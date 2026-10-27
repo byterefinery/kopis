@@ -72,7 +72,16 @@ from aiohttp import web
 from aiohttp_session import Session, get_session, setup
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 
-from ..common import KopisBase, RPCHandle, RpcError, USES, WS_PATH, decode, encode
+from ..common import (
+    Client,
+    KopisBase,
+    RPCHandle,
+    RpcError,
+    USES,
+    WS_PATH,
+    decode,
+    encode,
+)
 from . import browser
 
 __all__ = ["Kopis"]
@@ -420,6 +429,25 @@ class Kopis(KopisBase):
 
     # -- RPC ----------------------------------------------------------------
 
+    @property
+    def clients(self) -> list[Client]:
+        """The clients currently connected (with an open RPC WebSocket
+        connection), in the order they connected.
+
+        Each element is a :class:`~kopis.common.Client`: attribute
+        access calls a function that client registered, targeting it::
+
+            for client in k.clients:
+                await client.update_count()
+
+        A client that is not connected is not listed: a :meth:`call`
+        to it would be held in the queue and replayed when it
+        (re)connects, but the clients here are the ones reachable at
+        once.
+        """
+        with self._rpc_lock:
+            return [Client(self, client_id) for client_id in self._streams]
+
     def call(
         self, client_id: str, method: str, *args: object, **kwargs: object
     ) -> asyncio.Future:
@@ -432,6 +460,12 @@ class Kopis(KopisBase):
         in the queue and replayed when the client (re)connects. Requires a
         running event loop. Raises if a value in the call cannot be
         serialized: the call is not queued.
+
+        The counterpart of the client's ``k.rpc.<name>`` call: ``call``
+        picks the client it goes to by its id; its high-level form is
+        ``client.<name>(...)`` for ``client`` in :attr:`clients`. Inside
+        a function the client called, ``k.rpc.<name>`` targets that
+        client without an id.
         """
         call_id = next(self._next_call_id)
         call: dict[str, Any] = {
@@ -486,8 +520,9 @@ class Kopis(KopisBase):
         ws = web.WebSocketResponse(heartbeat=20)
         await ws.prepare(request)
         stream = _Stream(ws)
-        old = self._streams.get(client_id)
-        self._streams[client_id] = stream
+        with self._rpc_lock:
+            old = self._streams.get(client_id)
+            self._streams[client_id] = stream
         if old is not None:
             old.close()
             try:
@@ -510,8 +545,9 @@ class Kopis(KopisBase):
                 # An abnormal close (a dropped connection, a heartbeat
                 # failure, ...): worth seeing why.
                 print("kopis: ws closed", client_id, "code=", ws.close_code)
-            if self._streams.get(client_id) is stream:
-                del self._streams[client_id]
+            with self._rpc_lock:
+                if self._streams.get(client_id) is stream:
+                    del self._streams[client_id]
             sender.cancel()
             try:
                 await sender

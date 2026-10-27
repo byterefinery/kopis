@@ -17,7 +17,7 @@ brython ``browser`` and ``javascript`` objects it has no live version
 of.
 """
 
-from .base import KopisBase
+from .base import Client, KopisBase
 from .handle import RPCHandle
 from .magic import Magic
 from .signal import Signal
@@ -27,6 +27,7 @@ from .wire import RpcError, WS_PATH, decode, encode
 __all__ = [
     "USES",
     "WS_PATH",
+    "Client",
     "KopisBase",
     "Magic",
     "RPCHandle",

@@ -122,16 +122,20 @@ class _SignalSetter:
         object.__setattr__(self, "_signal", signal)
         object.__setattr__(self, "_on_change", on_change)
 
-    def __call__(self, value: Any) -> None:
+    def __call__(self, value: Any) -> Any:
         """Update the signal's value to ``value``.
 
         If the signal was given an ``on_change`` callback, it is called
-        with the signal and ``value`` after the update.
+        with the signal and ``value`` after the update, and its result
+        is returned: a synchronous callback returns ``None``, and an
+        async one returns its coroutine, so the caller drives it with
+        ``await set_count(value)``.
         """
         self._cell[0] = value
         on_change = self._on_change
         if on_change is not None:
-            on_change(self._signal, value)
+            return on_change(self._signal, value)
+        return None
 
     @property
     def __name__(self) -> str:
@@ -222,13 +226,16 @@ class Signal:
     sides of the web stack.
 
     ``on_change`` is optional: when given, it is called with the signal
-    and the new value on every update of the signal::
+    and the new value on every update of the signal. The setter returns
+    the callback's result, so an async ``on_change`` is driven by
+    awaiting the setter::
 
-        def count_changed(signal: Signal, new_value: int):
+        async def count_changed(signal: Signal, new_value: int):
             print("count_changed", new_value)
 
         signal = Signal(0, count_changed)
         get_count, set_count = signal
+        await set_count(new_value)
 
     The getter is a first-class function: it can be registered with
     ``k.register`` and called from the other side over RPC, and its

@@ -18,8 +18,11 @@ with k.document.body:
         k.html.text("Demo 1")
 
 
-def count_changed(signal: Signal, new_value: int):
+async def count_changed(signal: Signal, new_value: int):
     print("count_changed", new_value)
+
+    for client in k.clients:
+        await client.update_count()
 
 
 if k.is_server():
@@ -31,14 +34,20 @@ if k.is_server():
     async def inc_count():
         count = get_count()
         count += 1
-        set_count(count)
+        await set_count(count)  # drives the async on_change (the broadcast)
         return count
+
+
+@k.register
+async def update_count():
+    print("update_count")
+    k.btn0.innerHTML = await k.get_count()
 
 
 @k.window.onload
 async def window_load(e: DOMEvent):
     print("window_load", e)
-    k.btn0.innerHTML = await k.get_count()
+    await update_count()
 
 
 k.run()

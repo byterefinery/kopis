@@ -50,6 +50,8 @@ the two sides do the same way:
   :meth:`_apply_op`).
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from inspect import iscoroutine
@@ -62,7 +64,7 @@ from .magic import _event_name, _on_decorator
 from .uses import USES
 from .wire import RpcError
 
-__all__ = ["KopisBase"]
+__all__ = ["Client", "KopisBase"]
 
 
 class _RpcCall:
@@ -134,6 +136,46 @@ class _Rpc:
         return _RpcCall(self._owner, name)
 
 
+class Client:
+    """A client connected to the server: an element of
+    :attr:`KopisBase.clients` (server side).
+
+    Attribute access makes a callable that calls the function ``<name>``
+    that client registered, targeting that client — the high-level form
+    of the server's ``k.call(client_id, name, ...)``::
+
+        for client in k.clients:
+            await client.update_count()
+
+    The callable returns a future that resolves with the client's result
+    (await it). On the client side, ``k.clients`` is empty (a stand-in),
+    so a :class:`Client` only ever exists on the server.
+    """
+
+    _owner: KopisBase
+    _client_id: str
+
+    def __init__(self, owner: KopisBase, client_id: str) -> None:
+        object.__setattr__(self, "_owner", owner)
+        object.__setattr__(self, "_client_id", client_id)
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        """A callable that calls the function ``name`` the client
+        registered, targeting that client, and returns a future that
+        resolves with its result (await it)."""
+        if name.startswith("_"):
+            raise AttributeError(name)
+        owner, client_id = self._owner, self._client_id
+
+        def _call(*args: object, **kwargs: object) -> Any:
+            return owner.call(client_id, name, *args, **kwargs)
+
+        return _call
+
+    def __repr__(self) -> str:
+        return f"<client {self._client_id!r}>"
+
+
 class KopisBase(ABC):
     """Base class of the unified ``Kopis`` application.
 
@@ -142,7 +184,7 @@ class KopisBase(ABC):
     identical on both sides of the web stack (see the module docstring);
     the sides implement the platform-specific parts: the ``document``
     property, :meth:`run`, :meth:`add_static_file`, :meth:`parse_html`,
-    and :meth:`_rpc_call`.
+    :meth:`call`, :attr:`clients`, and :meth:`_rpc_call`.
     """
 
     #: Name of this side of the wire, used in error messages.
@@ -356,6 +398,19 @@ class KopisBase(ABC):
             raise AttributeError(name)
         return self.rpc.__getattr__(name)
 
+    @property
+    @abstractmethod
+    def clients(self) -> list[Client]:
+        """The clients currently connected to this application (server
+        side; a stand-in on the client side).
+
+        Each element is a :class:`Client`: attribute access calls a
+        function that client registered, targeting it::
+
+            for client in k.clients:
+                await client.update_count()
+        """
+
     @abstractmethod
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """Serve a file at a URL (server side); no-op on the client side."""
@@ -489,6 +544,19 @@ class KopisBase(ABC):
         :meth:`_handle_op`, so it applies at once on this side and
         travels to the owner otherwise)."""
         return self._handle_op(handle, "getattr", name)
+
+    @abstractmethod
+    def call(self, client_id: str, method: str, *args: object, **kwargs: object) -> Any:
+        """Queue a call to a function a client registered with
+        :meth:`register`, targeted at a specific client (server side;
+        a stand-in on the client side).
+
+        The counterpart of the ``k.rpc.<name>`` call, which always
+        targets the other side (the server): :meth:`call` picks the
+        client it goes to by its id, and returns a future that resolves
+        with the client's result. Its high-level form is
+        ``client.<name>(...)`` for ``client`` in :attr:`clients`.
+        """
 
     @abstractmethod
     async def _rpc_call(

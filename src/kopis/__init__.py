@@ -14,9 +14,11 @@ the running Python implementation:
 
 ``import kopis`` therefore resolves to the server side in CPython code
 and to the client side in browser code. Both sides expose the same
-unified API — ``Kopis`` (with ``register``, ``rpc``, ``document``,
-``html``, ``add_static_file``, ``parse_html``, and ``run``), the
-``Signal`` class, and the brython objects ``document``,
+unified API — ``Kopis`` (with ``register``, ``rpc``, ``call``,
+``clients``, ``document``, ``html``, ``add_static_file``,
+``parse_html``, and ``run``), the
+``Signal`` class, the ``Client`` proxy of a connected client, and the
+brython objects ``document``,
 ``DOMNode``, ``DOMEvent``, ``bind``, ``html``, ``aio``, ``ajax``,
 ``timer``, ``window``, and ``javascript`` — so a single application file
 can run unmodified on both sides; only the implementations differ
@@ -61,6 +63,7 @@ IS_CLIENT: bool = not IS_SERVER
 __all__ = [
     "IS_CLIENT",
     "IS_SERVER",
+    "Client",
     "DOMEvent",
     "DOMNode",
     "Kopis",
@@ -81,6 +84,7 @@ if IS_CLIENT:
     # Client side: running in the browser under Brython. The brython
     # built-ins are re-exported under the unified names.
     from .client import (
+        Client,
         Kopis,
         RPCHandle,
         RpcError,
@@ -100,6 +104,7 @@ else:
     # Server side: running on CPython. The stand-ins of the brython
     # objects are re-exported under the same unified names.
     from .server import (
+        Client,
         Kopis,
         RPCHandle,
         RpcError,

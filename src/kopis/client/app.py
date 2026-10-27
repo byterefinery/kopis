@@ -20,7 +20,7 @@ from typing import Any
 
 from browser import DOMNode, aio, document, html, window, websocket
 
-from ..common import KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
+from ..common import Client, KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
 from ..common.handle import _HandleAttr
 from .dom import _StandIn
 from .parser import parse_html
@@ -208,11 +208,32 @@ class Kopis(KopisBase):
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
         """No-op on the client: the web server runs on the server side."""
 
+    @property
+    def clients(self) -> list[Client]:
+        """Stand-in on the client: a client has no clients connected
+        to it (only the server routes calls between clients), so the
+        list is empty. Its only peer is the server — call it with
+        ``k.rpc.<name>(...)`` (the short way ``k.<name>(...)``).
+        """
+        return []
+
     def close(self) -> None:
         """Close the connection to the server (without reconnecting)."""
         self._closed_by_user = True
         if self._ws is not None:
             self._ws.close()
+
+    def call(self, client_id: str, method: str, *args: object, **kwargs: object) -> Any:
+        """Stand-in on the client: only the server routes calls to
+        clients, so there is no one here to call. The client's only
+        peer is the server — call it with ``k.rpc.<name>(...)`` (the
+        short way ``k.<name>(...)``).
+        """
+        raise RuntimeError(
+            "k.call can only be used on the server side (only the server "
+            "routes calls to clients); on the client, call the server "
+            "with k.rpc.<name>(...)"
+        )
 
     async def _rpc_call(
         self, name: str, args: tuple[object, ...], kwargs: dict[str, object]

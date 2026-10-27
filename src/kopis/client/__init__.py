@@ -34,9 +34,10 @@ import javascript
 
 from .app import Kopis
 from .dom import install as _install_dom
-from ..common import RPCHandle, RpcError, Signal
+from ..common import Client, RPCHandle, RpcError, Signal
 
 __all__ = [
+    "Client",
     "DOMEvent",
     "DOMNode",
     "Kopis",
