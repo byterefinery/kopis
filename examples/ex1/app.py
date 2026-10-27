@@ -11,6 +11,7 @@ k.document.body.attach("""
     </button>
 """)
 
+
 count = 0
 
 
@@ -26,6 +27,7 @@ async def inc_count():
     return count
 
 
+@k.btn0.onclick
 async def btn0_click(e: DOMEvent):
     print("btn0_click", e, e.detail)
     v: int = await k.inc_count()
@@ -33,13 +35,14 @@ async def btn0_click(e: DOMEvent):
     k.btn0.innerHTML = v
 
 
-k.btn0.onclick = btn0_click
+# k.btn0.onclick = btn0_click
 
 
+@k.window.onload
 async def window_load(e: DOMEvent):
     print("window_load", e)
     k.btn0.innerHTML = await k.get_count()
 
 
-k.onload = window_load
+# k.onload = window_load
 k.run()

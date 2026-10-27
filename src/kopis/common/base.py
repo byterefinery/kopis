@@ -32,7 +32,12 @@ the two sides do the same way:
   client, which has the live DOM, ``k.name`` first resolves to the
   element with that id (``k["name"]``) and is the RPC call only if no
   element has that id — and ``k["id"]`` the short way for
-  ``k.document["id"]`` (the element with that id);
+  ``k.document["id"]`` (the element with that id); an ``on<event>``
+  read of such a name (``k.name.onclick``) is the no-op decorator of
+  the decorator form on the server, where the name is an RPC call —
+  the decorator binds nothing and returns the decorated handler; on
+  the client the element (with the real decorator) comes first, if it
+  exists;
 - :meth:`_dispatch`, which runs a function called by the other side
   and builds the ``result`` or ``error`` part of its payload;
 - :meth:`_settle_result`, which resolves the future of a pending call
@@ -51,10 +56,46 @@ from pathlib import Path
 from typing import Any, Self
 
 from .handle import RPCHandle, _HandleAttr
+from .magic import _event_name, _on_decorator
 from .uses import USES
 from .wire import RpcError
 
 __all__ = ["KopisBase"]
+
+
+class _RpcCall:
+    """``k.rpc.name`` (and the short way ``k.name``): a callable that
+    calls the function ``name`` registered on the other side.
+
+    An ``on<event>`` read of it (``k.name.onclick``) is the no-op
+    decorator of the decorator form, so unified code that binds an
+    event handler to an element by id runs unmodified on the server,
+    where ``k.name`` is the RPC call and the decorator binds nothing
+    (and returns the decorated handler); on the client, which has the
+    live DOM, ``k.name`` is the element with that id, if there is one,
+    and the decorator there binds for real.
+    """
+
+    _owner: KopisBase
+    _name: str
+
+    def __init__(self, owner: KopisBase, name: str) -> None:
+        object.__setattr__(self, "_owner", owner)
+        object.__setattr__(self, "_name", name)
+
+    def __call__(self, *args: object, **kwargs: object) -> object:
+        return self._owner._rpc_call(self._name, args, kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        event = _event_name(name)
+        if event is not None:
+            return _on_decorator(self, event)
+        raise AttributeError(name)
+
+    def __repr__(self) -> str:
+        return f"<RPC call {self._name!r}>"
 
 
 class _Rpc:
@@ -83,14 +124,12 @@ class _Rpc:
         """
         return self._owner.register
 
-    def __getattr__(self, name: str) -> Callable[..., Any]:
+    def __getattr__(self, name: str) -> _RpcCall:
+        """A callable that calls the function ``name`` registered on
+        the other side (``k.rpc.name`` / ``k.name``)."""
         if name.startswith("_"):
             raise AttributeError(name)
-
-        async def call(*args: object, **kwargs: object) -> object:
-            return await self._owner._rpc_call(name, args, kwargs)
-
-        return call
+        return _RpcCall(self._owner, name)
 
 
 class KopisBase(ABC):
@@ -292,6 +331,11 @@ class KopisBase(ABC):
         that id (``k["name"]``), and is the RPC call only if no element
         has that id. On the server (no live DOM) every name is the RPC
         call.
+
+        An ``on<event>`` read of the returned callable (e.g.
+        ``k.name.onclick``) is the no-op decorator of the decorator
+        form on this side, where the name is an RPC call (the
+        decorator binds nothing and returns the decorated handler).
 
         Only consulted for names that are not found the usual way, so
         the ``Kopis`` API (``register``, ``rpc``, ``document``, ...)

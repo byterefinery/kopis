@@ -31,7 +31,7 @@ unmodified, with the brython semantics where they matter:
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
-from ..common.magic import Magic
+from ..common.magic import Magic, _event_name, _on_decorator
 
 __all__ = [
     "DOMEvent",
@@ -53,7 +53,9 @@ class DOMNode(Magic):
     ``<=`` (all the same operation), ``bind``, ``clone``, attribute
     subscripts, ``+`` / ``*``, ``with`` — but everything is a no-op:
     there is no live DOM on the server, so handlers are never fired and
-    nothing is rendered.
+    nothing is rendered. An ``on<event>`` read (``element.onclick``) is
+    the no-op decorator of the decorator form: it binds nothing and
+    returns the decorated handler.
     """
 
     _html: str
@@ -61,13 +63,19 @@ class DOMNode(Magic):
     def __init__(self, html: str = "") -> None:
         object.__setattr__(self, "_html", html)
 
-    def __getattr__(self, name: str) -> DOMNode:
+    def __getattr__(self, name: str) -> Any:
         # Unknown attributes are stand-in elements as well, so chained
         # DOM code (``document.body.select(...)``) stays a DOMNode. They
         # are cached, so e.g. ``document.body`` is one stable stand-in
-        # element, as in brython.
+        # element, as in brython — except that an ``on<event>`` name is
+        # the no-op decorator of the decorator form (see
+        # :func:`~kopis.common.magic._on_decorator`): it binds nothing
+        # on the server and returns the decorated handler.
         if name.startswith("_"):
             raise AttributeError(name)
+        event = _event_name(name)
+        if event is not None:
+            return _on_decorator(self, event)
         child = DOMNode()
         object.__setattr__(self, name, child)
         return child

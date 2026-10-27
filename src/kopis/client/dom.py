@@ -57,6 +57,33 @@ This module extends both, once, by monkey-patching the brython
   has the live DOM: the subscripts, the attribute, and ``bind`` /
   ``addEventListener`` all work as described; on the server they are
   stand-in no-ops, as with everything else on the document.)
+- the same, with the decorator form ``@element.on<event>``, read through
+  the app's stand-in of the element (``k.<id>``; :class:`_StandIn`):
+  the read returns a decorator, and applying it to a handler is the
+  same as the ``element.on<event> = func`` assignment above (a
+  coroutine handler is started with ``aio.run`` when the event fires),
+  and the decorated handler is returned::
+
+      @k.btn0.onclick
+      async def click(event):
+          ...                                   # same as k.btn0.onclick = click
+
+  The same, for the window, through the app's stand-in of the window
+  (``k.window``): ``@k.window.onload`` is the same as
+  ``k.window.onload = load`` (a coroutine ``load`` is wrapped as above,
+  and — set after the ``load`` event has already been dispatched, which
+  is always the case, since brython runs the application code on the
+  ``load`` event — is called at once, with a synthetic ``DOMEvent`` of
+  the ``load`` type, as if the event fired at the binding), and the
+  decorated handler is returned::
+
+      @k.window.onload
+      async def load(event):
+          ...                                   # same as k.window.onload = load
+
+  (On the server the same reads — on the stand-in element, the window,
+  or an RPC name — return the no-op decorator, as with everything else
+  on the stand-ins.)
 - the same coroutine wrapping, for the ``on<event>`` attributes of
   Javascript objects (the brython ``JSObject`` class, e.g. the
   ``window``): ``window.on<event> = func`` with a coroutine ``func``
@@ -109,19 +136,77 @@ appended to the document goes to its body.
 """
 
 from browser import DOMEvent, DOMNode, aio, document, window
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from inspect import iscoroutinefunction
 from typing import Any
+
+from ..common.magic import _event_name, _on_decorator
 
 __all__ = ["install"]
 
 
-def _event_name(key: object) -> str | None:
-    """The event name hidden behind an ``on<event>`` key (``None`` if
-    ``key`` is not such a key)."""
-    if isinstance(key, str) and key.startswith("on") and len(key) > 2:
-        return key[2:]
-    return None
+class _StandIn:
+    """The app's stand-in of an element of the document (``k.<id>``) or
+    of the window (``k.window``).
+
+    It delegates everything to the wrapped object, except that an
+    ``on<event>`` read (``k.btn0.onclick``, ``k.window.onload``) returns
+    the decorator of the decorator form: applying it to a handler is
+    the same as the corresponding ``on<event>`` assignment (see the
+    module docstring), and the decorated handler is returned. The
+    wrapped object itself remains available as ``k["<id>"]`` /
+    ``k.document["<id>"]`` (the element) and as ``browser.window``
+    (the window).
+    """
+
+    _target: Any
+
+    def __init__(self, target: Any) -> None:
+        object.__setattr__(self, "_target", target)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        event = _event_name(name)
+        if event is not None:
+            return _on_decorator(self._target, event)
+        return getattr(self._target, name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        setattr(self._target, name, value)
+
+    def __getitem__(self, key: object) -> Any:
+        return self._target[key]
+
+    def __setitem__(self, key: object, value: object) -> None:
+        self._target[key] = value
+
+    def __delitem__(self, key: object) -> None:
+        del self._target[key]
+
+    # The brython DOM operators and protocols, delegated to the wrapped
+    # object.
+
+    def __le__(self, other: object) -> Any:
+        return self._target <= other
+
+    def __add__(self, other: object) -> Any:
+        return self._target + other
+
+    def __mul__(self, other: object) -> Any:
+        return self._target * other
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._target)
+
+    def __len__(self) -> int:
+        return len(self._target)
+
+    def __str__(self) -> str:
+        return str(self._target)
+
+    def __repr__(self) -> str:
+        return repr(self._target)
 
 
 # ``DOMContentLoaded`` of the document, once dispatched, never fires

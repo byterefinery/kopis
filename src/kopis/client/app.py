@@ -22,6 +22,7 @@ from browser import DOMNode, aio, document, window, websocket
 
 from ..common import KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
 from ..common.handle import _HandleAttr
+from .dom import _StandIn
 from .parser import parse_html
 
 __all__ = ["Kopis"]
@@ -94,6 +95,10 @@ class Kopis(KopisBase):
         self._next_id = itertools.count(1)
         self._client_id = _client_id()  # this tab's identity on the server
         self._owner_id = self._client_id  # this tab's identity in the handles it makes
+        self._elements: dict[
+            str, _StandIn
+        ] = {}  # id -> stand-in of the element with that id
+        self._window_view: _StandIn | None = None  # stand-in of the window
         self._ws: Any = None
         self._open = False
         self._closed_by_user = False
@@ -106,10 +111,18 @@ class Kopis(KopisBase):
         return document
 
     @property
-    def window(self) -> Any:
+    def window(self) -> _StandIn:
         """The browser window (the brython ``browser.window``
-        object)."""
-        return window
+        object), as a stand-in whose ``on<event>`` read is the
+        decorator of the decorator form: ``@k.window.onload`` is the
+        same as ``k.window.onload = load`` (see :mod:`kopis.client.dom`).
+        Everything else delegates to the window itself.
+        """
+        view = self._window_view
+        if view is None:
+            view = _StandIn(window)
+            self._window_view = view
+        return view
 
     def __getattr__(self, name: str) -> Any:
         """The element of the document with that id, or — if no element
@@ -117,15 +130,20 @@ class Kopis(KopisBase):
         one is set (``k.onload`` after ``k.onload = handler``), or —
         otherwise — the short way for ``k.rpc.name``.
 
-        ``k.btn0`` is the element with id ``"btn0"`` (the same as
-        ``k["btn0"]`` / ``k.document["btn0"]``); if no element has that
-        id, an ``on<event>`` name reads back the handler of the
-        window's ``on<event>`` property, if one is set, and any other
-        name calls a function registered on the other side (the
-        server), as in the base class. The client is the side with the
-        live DOM, so element ids take precedence over handler names
-        and RPC names (the server has no live DOM and resolves every
-        name to the RPC call, where it stays a stand-in no-op).
+        ``k.btn0`` is the stand-in of the element with id ``"btn0"``
+        (``k["btn0"]`` / ``k.document["btn0"]`` is the element itself):
+        everything delegates to the element, and an ``on<event>`` read
+        (``k.btn0.onclick``) is the decorator of the decorator form —
+        ``@k.btn0.onclick`` is the same as ``k.btn0.onclick = handler``
+        (see :mod:`kopis.client.dom`). If no element has that id, an
+        ``on<event>`` name reads back the handler of the window's
+        ``on<event>`` property, if one is set, and any other name calls
+        a function registered on the other side (the server), as in the
+        base class (where the ``on<event>`` read of the RPC call is the
+        no-op decorator). The client is the side with the live DOM, so
+        element ids take precedence over handler names and RPC names
+        (the server has no live DOM and resolves every name to the RPC
+        call, where it stays a stand-in no-op).
 
         Only consulted for names that are not found the usual way, so
         the ``Kopis`` API (``register``, ``rpc``, ``document``, ...)
@@ -134,16 +152,23 @@ class Kopis(KopisBase):
         if name.startswith("_") or name == "rpc":
             raise AttributeError(name)
         try:
-            return self.document[name]
+            element = self.document[name]
         except KeyError:
-            if name.startswith("on") and len(name) > 2:
-                try:
-                    handler = getattr(window, name)
-                except AttributeError:
-                    handler = None
-                if handler is not None:
-                    return handler
-            return super().__getattr__(name)
+            element = None
+        if element is not None:
+            view = self._elements.get(name)
+            if view is None:
+                view = _StandIn(element)
+                self._elements[name] = view
+            return view
+        if name.startswith("on") and len(name) > 2:
+            try:
+                handler = getattr(window, name)
+            except AttributeError:
+                handler = None
+            if handler is not None:
+                return handler
+        return super().__getattr__(name)
 
     def _handle_getattr(self, handle: RPCHandle, name: str) -> Any:
         """The result of ``handle.<name>``.
@@ -219,6 +244,7 @@ class Kopis(KopisBase):
             if self._ws is not ws:
                 return
             self._open = True
+            print("kopis: websocket opened")
             # Re-send the calls and ops still awaiting a result: what
             # was sent before the connection dropped, and what was
             # queued while it was down. The server runs each id at most

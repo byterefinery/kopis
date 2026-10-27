@@ -14,10 +14,33 @@ nothing — there is no live DOM on the server.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Self
+from collections.abc import Callable, Iterator
+from typing import Any, Self
 
 __all__ = ["Magic"]
+
+
+def _event_name(key: object) -> str | None:
+    """The event name hidden behind an ``on<event>`` key (``None`` if
+    ``key`` is not such a key)."""
+    if isinstance(key, str) and key.startswith("on") and len(key) > 2:
+        return key[2:]
+    return None
+
+
+def _on_decorator(target: object, event: str) -> Callable[..., Any]:
+    """The decorator behind the read of an ``on<event>`` attribute of
+    ``target``: applying it to a handler is the same as
+    ``target.on<event> = handler`` — the binding of the client (a
+    coroutine handler is started with ``aio.run`` when the event
+    fires), a no-op of the server (no live DOM) — and the decorated
+    handler is returned."""
+
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        setattr(target, f"on{event}", func)
+        return func
+
+    return decorator
 
 
 class Magic:
@@ -26,15 +49,24 @@ class Magic:
     Stateless: attribute access, calls, iteration, subscripts, and
     awaits all succeed (returning another ``Magic``); truth testing and
     length are falsy/zero. The brython DOM operators work the same way
-    (see below): there is no live DOM on the server.
+    (see below): there is no live DOM on the server. An ``on<event>``
+    name (e.g. ``window.onload``) reads as the decorator of the
+    decorator form: it binds nothing (no live DOM) and returns the
+    decorated handler.
     """
 
-    def __getattr__(self, name: str) -> Magic:
+    def __getattr__(self, name: str) -> Any:
         # Missing attributes are stand-ins as well. They are cached, so
         # e.g. ``window.location`` is one stable stand-in object, as in
-        # brython (where ``document.body`` is the same element each time).
+        # brython (where ``document.body`` is the same element each
+        # time) — except that an ``on<event>`` name is the decorator
+        # of the decorator form (see :func:`_on_decorator`): it binds
+        # nothing on the server and returns the decorated handler.
         if name.startswith("_"):
             raise AttributeError(name)
+        event = _event_name(name)
+        if event is not None:
+            return _on_decorator(self, event)
         child = Magic()
         object.__setattr__(self, name, child)
         return child
