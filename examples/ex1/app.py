@@ -1,16 +1,9 @@
-from kopis import Kopis, DOMEvent
+from kopis import Kopis, DOMEvent, signal
 
 
 k = Kopis()
 k.use("tailwindcss")
 k.use("daisyui")
-
-
-# k.document.body.attach("""
-#     <button id="btn0" class="btn btn-primary">
-#         Demo 1
-#     </button>
-# """)
 
 
 async def btn0_click(e: DOMEvent):
@@ -25,27 +18,16 @@ with k.document.body:
         k.html.text("Demo 1")
 
 
-count = 0
-
-
-@k.register
-def get_count() -> int:
-    return count
+get_count, set_count = signal(0)
+get_count = k.register(get_count)
 
 
 @k.register
 async def inc_count():
-    global count
+    count = get_count()
     count += 1
+    set_count(count)
     return count
-
-
-# @k.btn0.onclick
-# async def btn0_click(e: DOMEvent):
-#     print("btn0_click", e, e.detail)
-#     v: int = await k.inc_count()
-#     print(f"{v=}")
-#     k.btn0.innerHTML = v
 
 
 @k.window.onload
