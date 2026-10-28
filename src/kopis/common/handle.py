@@ -64,44 +64,49 @@ from typing import Any
 
 __all__ = ["RPCHandle"]
 
-#: Brython only: a native Javascript ``Promise`` subclass that brython's
-#: ``await`` drives (see :func:`_brython_promise_wrap`).
-_PROMISE_WRAP_JS = (
-    "(function () {"
-    "  class P extends Promise {"
-    "    constructor(executor) { super(executor) }"
-    "    __next__() { throw new Error('StopIteration') }"
-    "  }"
-    "  return function (fut) {"
-    "    return new P(function (resolve, reject) {"
-    "      if (fut && typeof fut.then === 'function') {"
-    "        fut.then(resolve, reject)"
-    "      } else {"
-    "        // A plain value (a locally-owned op applied at once):"
-    "        // resolve it directly."
-    "        resolve(fut)"
-    "      }"
-    "    })"
-    "  }"
-    "})()"
-)
+_brython_wrap: Any = None  # the promise wrap function, cached
 
-_brython_wrap: Any = None  # the ``_PROMISE_WRAP_JS`` function, cached
+
+def _stop_iteration() -> None:
+    """The ``__next__`` of the wrapped promise.
+
+    Never driven — brython's ``await`` drives the native promise
+    through ``then`` — but brython requires the object returned from
+    ``__await__`` to expose ``__next__``, so it must be there.
+    """
+    raise StopIteration
 
 
 def _brython_promise_wrap() -> Any:
     """Brython only: a function wrapping an ``aio.Future`` (a native
-    Javascript promise) in a native ``Promise`` subclass.
+    Javascript promise) in a native ``Promise`` that brython's
+    ``await`` drives.
 
-    Brython's ``await`` only drives native thenables, and requires the
-    object returned from ``__await__`` to expose ``__next__`` — a
-    subclass of ``Promise`` satisfies both.
+    Brython compiles ``await`` to a native Javascript await of the
+    object ``__await__`` returns: the object must expose ``__next__``
+    to pass brython's check, and it must be a native thenable — a
+    ``Promise`` — for the native await to actually wait on it. A
+    plain value (a locally-owned op applied at once) is resolved
+    directly.
     """
     global _brython_wrap
     if _brython_wrap is None:
         from browser import window
 
-        _brython_wrap = window.eval(_PROMISE_WRAP_JS)
+        def _wrap(fut: Any) -> Any:
+            def _executor(resolve: Any, reject: Any) -> None:
+                if fut is None or not hasattr(fut, "then"):
+                    # A plain value (a locally-owned op applied at
+                    # once): resolve it directly.
+                    resolve(fut)
+                else:
+                    fut.then(resolve, reject)
+
+            promise = window.Promise.new(_executor)
+            promise.__next__ = _stop_iteration
+            return promise
+
+        _brython_wrap = _wrap
     return _brython_wrap
 
 

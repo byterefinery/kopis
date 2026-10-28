@@ -41,7 +41,7 @@ get_count = k.register(get_count)
 @k.register
 async def inc_count():
     count = get_count() + 1
-    await set_count(count)  # drives the async on_change (the broadcast)
+    await set_count(count)
     return count
 
 
