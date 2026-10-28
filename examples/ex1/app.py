@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from kopis import Kopis, DOMEvent, Signal
 
 
@@ -13,9 +14,16 @@ async def btn0_click(e: DOMEvent):
     k.btn0.innerHTML = v
 
 
+def Button(text: str, onclick: Callable | None=None):
+    with k.html.button(id="btn0", class_="btn btn-primary", onclick=onclick) as el:
+        k.html.text(text)
+
+    return el
+
+
 with k.document.body:
-    with k.html.button(id="btn0", class_="btn btn-primary", onclick=btn0_click):
-        k.html.text("Demo 1")
+    b = Button("Demo 1")
+    b.onclick = btn0_click
 
 
 async def count_changed(signal: Signal, new_value: int):
@@ -25,17 +33,16 @@ async def count_changed(signal: Signal, new_value: int):
         await client.update_count()
 
 
-if k.is_server():
-    signal = Signal(0, count_changed)
-    get_count, set_count = signal
-    get_count = k.register(get_count)
+signal = Signal(0, count_changed)
+get_count, set_count = signal
+get_count = k.register(get_count)
 
-    @k.register
-    async def inc_count():
-        count = get_count()
-        count += 1
-        await set_count(count)  # drives the async on_change (the broadcast)
-        return count
+
+@k.register
+async def inc_count():
+    count = get_count() + 1
+    await set_count(count)  # drives the async on_change (the broadcast)
+    return count
 
 
 @k.register
