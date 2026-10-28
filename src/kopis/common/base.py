@@ -25,10 +25,12 @@ the two sides do the same way:
   the server, where there is no live window;
 - the ``html`` property — the ``browser.html`` builder on the client,
   a stand-in on the server;
-- :meth:`signal` (the app's way to make a :class:`~kopis.common.Signal`)
-  and :meth:`effect` (the app's way to make an
-  :class:`~kopis.common.Effect` scope) — the reactive primitives of
-  the app, the same objects the classes make directly;
+- :meth:`signal` (the app's way to make a :class:`~kopis.common.Signal`),
+  :meth:`shared_signal` (the app's way to make a
+  :class:`~kopis.common.SharedSignal` — a signal whose value is shared
+  between the server and the clients), and :meth:`effect` (the app's
+  way to make an :class:`~kopis.common.Effect` scope) — the reactive
+  primitives of the app, the same objects the classes make directly;
 - :meth:`register` (the canonical way ``k.rpc.register``, and the
   short way ``k.register``), and the registry of the functions
   registered with it;
@@ -46,6 +48,9 @@ the two sides do the same way:
   exists;
 - :meth:`_dispatch`, which runs a function called by the other side
   and builds the ``result`` or ``error`` part of its payload;
+- the wiring of a :meth:`shared_signal`'s halves to the other side
+  (the actual syncing of a shared signal's change is left to
+  :meth:`_sync_shared_signal`);
 - :meth:`_settle_result`, which resolves the future of a pending call
   from its ``result`` message;
 - the registry of live objects this side keeps for values wrapped in
@@ -66,7 +71,7 @@ from typing import Any, Self
 from .effect import Effect
 from .handle import RPCHandle, _HandleAttr
 from .magic import _event_name, _on_decorator
-from .signal import Signal, _SignalGetter
+from .signal import SharedSignal, Signal, _SignalGetter
 from .uses import USES
 from .wire import RpcError
 
@@ -207,7 +212,8 @@ class KopisBase(ABC):
     identical on both sides of the web stack (see the module docstring);
     the sides implement the platform-specific parts: the ``document``
     property, :meth:`run`, :meth:`add_static_file`, :meth:`parse_html`,
-    :meth:`call`, :attr:`clients`, and :meth:`_rpc_call`.
+    :meth:`call`, :attr:`clients`, :meth:`_rpc_call`, and
+    :meth:`_sync_shared_signal`.
     """
 
     #: Name of this side of the wire, used in error messages.
@@ -278,6 +284,12 @@ class KopisBase(ABC):
         self._owner_id: str | None = (
             None  # this side's identity in the handles it makes
         )
+        # The next number of a shared signal of the app (1-based; the
+        # number is the shared signal's index in its internal RPC
+        # names, and must match between the sides — the shared signals
+        # are created by the unified code, in the same order, on both
+        # sides).
+        self._next_shared_signal = 1
         # The dependencies of the constructor, as with k.use(...).
         self.use(*self._use)
 
@@ -348,6 +360,35 @@ class KopisBase(ABC):
         value, as with everything else on this side.
         """
         return Signal(value, on_change)
+
+    def shared_signal(
+        self,
+        value: Any,
+        on_change: Callable[[Signal, Any], Any] | None = None,
+    ) -> SharedSignal:
+        """A :class:`~kopis.common.signal.SharedSignal` of the
+        application: a signal whose value is shared between the server
+        and the clients (the class can be used directly, and works the
+        same way) — see the class for the pair's behaviour and for how
+        the two sides' copies of the value are synced.
+
+        The call is unified code: it runs on both sides, and each side
+        gets its half of the sharing (the server the shared side of
+        the value, each client a copy of it), and wires its halves to
+        the other side under the shared signal's internal RPC names:
+        the server registers its getter (which serves the shared
+        value) and its setter (which updates it, and then pushes the
+        change to the other clients), and each client registers its
+        push handler (which the server calls to notify it of a
+        change, and which updates its copy of the value).
+        """
+        shared = SharedSignal(self, value, on_change)
+        if self.is_server():
+            self._bound[shared._getter_name] = shared._getter
+            self._bound[shared._setter_name] = shared._setter
+        else:
+            self._bound[shared._setter_name] = shared._push_handler()
+        return shared
 
     def effect(self) -> Effect:
         """An :class:`~kopis.common.effect.Effect` scope of the
@@ -618,6 +659,22 @@ class KopisBase(ABC):
 
         Raises if a value in the call cannot be serialized on this
         side: the call is not sent.
+        """
+
+    @abstractmethod
+    async def _sync_shared_signal(self, shared: SharedSignal, value: Any) -> None:
+        """Sync a change of a shared signal's value, made by the shared
+        signal's setter: apply the change to this side's copy of the
+        value (the observers of it run, and its ``on_change``
+        callback, if any, is called with the signal and the value),
+        and send the change to the other side. The server applies the
+        change to the shared value first, and then pushes it to the
+        other clients (the client that made the change is not
+        notified — its copy of the value gets it when the server's
+        result comes back); the client sends the change to the server
+        first (whose copy of the value is the shared one, and which
+        applies it and pushes it to the other clients), and applies
+        it to its own copy afterwards.
         """
 
     async def _dispatch(

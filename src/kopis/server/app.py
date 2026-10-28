@@ -77,6 +77,7 @@ from ..common import (
     KopisBase,
     RPCHandle,
     RpcError,
+    SharedSignal,
     USES,
     WS_PATH,
     decode,
@@ -495,6 +496,28 @@ class Kopis(KopisBase):
                 "use k.call(client_id, ...) to target a client explicitly"
             )
         return await self.call(client_id, name, *args, **kwargs)
+
+    async def _sync_shared_signal(self, shared: SharedSignal, value: Any) -> None:
+        """Apply a change of a shared signal's value to the shared value
+        (the server's copy — the observers of it run, and its
+        ``on_change`` callback, if any, is called), and push it to the
+        other clients: every connected client but the one that made
+        the change (whose copy of the value gets it when the server's
+        result comes back) gets a call of its push handler, which
+        updates its copy of the value (and runs its observers and its
+        ``on_change`` callback, if any).
+
+        A change made on the server itself (no client being served) is
+        pushed to every connected client.
+        """
+        result = shared._signal._setter(value)
+        if iscoroutine(result):
+            await result
+        origin = self._current_client.get()
+        for client in self.clients:
+            if client._client_id == origin:
+                continue
+            self.call(client._client_id, shared._setter_name, value)
 
     async def _rpc_ws(self, request: web.Request) -> web.WebSocketResponse:
         """Handle a client's WebSocket connection (GET /__kopis__/rpc).

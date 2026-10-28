@@ -51,16 +51,26 @@ an observer of the signal, and an update of the signal's value (to a
 value different from the current one) runs the observers, so the read
 is re-done and its value re-rendered in place. See
 :mod:`kopis.common.effect` for the scope.
+
+A :class:`SharedSignal` is a :class:`Signal` whose value is shared
+between the server and the clients (the app's way to make one is
+``k.shared_signal``): the server holds the shared side of the value,
+each client a copy of it, and the two are synced — a change made on
+either side reaches the other, and the observers of each side's copy
+run on it. Both halves of a shared signal are awaitable (calling one
+returns a coroutine), so the unified code reads and writes the value
+the same way on both sides.
 """
 
 from __future__ import annotations
 
 import sys
 from collections.abc import Callable, Iterator
+from inspect import iscoroutine
 from pickle import PicklingError
 from typing import Any, NoReturn
 
-__all__ = ["Signal"]
+__all__ = ["SharedSignal", "Signal"]
 
 #: The stack of the active effect scopes (innermost last): the scope a
 #: signal read runs in (see :class:`~kopis.common.effect.Effect`).
@@ -352,3 +362,222 @@ class Signal:
 
     def __repr__(self) -> str:
         return f"<Signal {self._cell[0]!r}>"
+
+
+class _SharedSignalGetter:
+    """The getter half of a shared signal (see
+    :class:`SharedSignal`): calling it returns a coroutine that
+    resolves to the signal's value.
+
+    As with a plain signal's getter, a read in an active effect scope
+    that is tracking a read (a getter child of a component) registers
+    the read's update callback as an observer of this side's copy of
+    the value, so an update of the copy re-runs the read. The value
+    itself, on the client side, always comes from the server (the
+    shared side of the signal); on the server, it is the shared value
+    itself. Calling the getter therefore always returns an awaitable,
+    on both sides, so the unified code can ``await get_count()``
+    unmodified.
+    """
+
+    _shared: SharedSignal
+
+    def __init__(self, shared: SharedSignal) -> None:
+        object.__setattr__(self, "_shared", shared)
+
+    def __call__(self) -> Any:
+        """A coroutine that resolves to the signal's value (see the
+        class docstring for where the value comes from, and what a
+        read in a tracking scope registers)."""
+        scope = _scopes[-1] if _scopes else None
+        if scope is not None and scope._tracking is not None:
+            scope.observe(self._shared._signal, scope._tracking)
+        if self._shared._kopis.is_server():
+            signal = self._shared._signal
+
+            async def _get() -> Any:
+                return signal._getter()
+
+            return _get()
+        kopis = self._shared._kopis
+        name = self._shared._getter_name
+
+        async def _get() -> Any:
+            return await kopis._rpc_call(name, (), {})
+
+        return _get()
+
+    @property
+    def __name__(self) -> str:
+        """The name this getter is bound to in the calling scope (see
+        :func:`_bound_name`)."""
+        return _bound_name(self, "get")
+
+    def __repr__(self) -> str:
+        return f"<shared signal getter {self._shared._getter_name!r}>"
+
+    def __reduce__(self) -> NoReturn:
+        raise PicklingError(
+            "a shared signal getter cannot be pickled: its value lives on the server"
+        )
+
+
+class _SharedSignalSetter:
+    """The setter half of a shared signal (see
+    :class:`SharedSignal`): calling it with a value returns a
+    coroutine that updates the signal.
+
+    Awaiting the coroutine syncs the change to the other side (the
+    side's :meth:`~kopis.common.KopisBase._sync_shared_signal`
+    drives it) and updates this side's copy of the value (the local
+    observers run, and the ``on_change`` callback, if any, is called
+    with the signal and the value). The server applies the change to
+    the shared value first, and then pushes it to the other clients;
+    the client sends the change to the server first (which applies it
+    and pushes it to the other clients), and updates its own copy
+    after — so a re-read of the value (a re-done read of a tracked
+    getter, for example) never fetches a value the server has not
+    applied yet. The setter therefore always returns an awaitable,
+    on both sides, so the unified code can ``await set_count(value)``
+    unmodified.
+    """
+
+    _shared: SharedSignal
+
+    def __init__(self, shared: SharedSignal) -> None:
+        object.__setattr__(self, "_shared", shared)
+
+    def __call__(self, value: Any) -> Any:
+        """A coroutine that updates the signal to ``value`` and syncs
+        the change to the other side (see the class docstring)."""
+        shared = self._shared
+
+        async def _set() -> Any:
+            await shared._kopis._sync_shared_signal(shared, value)
+
+        return _set()
+
+    @property
+    def __name__(self) -> str:
+        """The name this setter is bound to in the calling scope (see
+        :func:`_bound_name`)."""
+        return _bound_name(self, "set")
+
+    def __repr__(self) -> str:
+        return f"<shared signal setter {self._shared._setter_name!r}>"
+
+    def __reduce__(self) -> NoReturn:
+        raise PicklingError(
+            "a shared signal setter cannot be pickled: its value lives on the server"
+        )
+
+
+class SharedSignal:
+    """A :class:`Signal` whose value is shared between the server and
+    the clients.
+
+    ``k.shared_signal(value, on_change)`` is the app's way to make one
+    (the call is unified code: it runs on both sides, and each side
+    gets its half of the sharing) — the server gets the shared side of
+    the value, and every client gets a client-side copy of it. The
+    two are synced: whatever a client sets, the server's value gets,
+    and the change is then notified to the other clients, whose
+    copies get it too (and whose observers run, as with a plain
+    signal on each side). The value is always the server's: a
+    client's getter reads the server's current value, and a client's
+    setter sends the change to the server (which applies it and
+    notifies the other clients), and then updates its own copy (so
+    its own observers run, and a re-read of the value never fetches a
+    value the server has not applied yet).
+
+    A :class:`SharedSignal` unpacks to the getter and the setter, in
+    that order (as a :class:`Signal` does)::
+
+        get_count, set_count = k.shared_signal(0, count_changed)
+
+    Both halves are awaitable (calling one returns a coroutine), so
+    the unified code reads and writes the value the same way on both
+    sides::
+
+        count = await get_count()
+        count += 1
+        await set_count(count)
+
+    A getter read inside an
+    :class:`~kopis.common.effect.Effect` scope that is tracking a
+    read (a getter child of a component) registers the read as an
+    observer of this side's copy of the value, so an update of the
+    copy (a local update, or a notification of a change made on the
+    other side) re-runs the read and re-renders the value in place,
+    as with a plain signal.
+
+    The halves travel over RPC under internal names
+    (``__kopis_shared_get_<n>`` and ``__kopis_shared_set_<n>``,
+    ``n`` being the shared signal's number, counted from the app's
+    first ``k.shared_signal``), so a shared signal is created by the
+    unified code, in the same order, on both sides (as every other
+    line of the app is). The names the developer binds the halves to
+    (``get_count``, ``set_count``) are their ``__name__`` (as with a
+    plain signal's halves), and either half can be registered with
+    ``k.register`` like any other function.
+    """
+
+    _kopis: Any
+    _signal: Signal
+    _index: int
+    _getter_name: str
+    _setter_name: str
+    _getter: _SharedSignalGetter
+    _setter: _SharedSignalSetter
+
+    def __init__(
+        self,
+        kopis: Any,
+        value: Any,
+        on_change: Callable[[Signal, Any], Any] | None = None,
+    ) -> None:
+        self._index = kopis._next_shared_signal
+        kopis._next_shared_signal += 1
+        self._getter_name = f"__kopis_shared_get_{self._index}"
+        self._setter_name = f"__kopis_shared_set_{self._index}"
+        self._kopis = kopis
+        # This side's copy of the value: the shared one on the server,
+        # a per-client copy on the client.
+        self._signal = Signal(value, on_change)
+        self._getter = _SharedSignalGetter(self)
+        self._setter = _SharedSignalSetter(self)
+
+    def _push_handler(self) -> Callable[..., Any]:
+        """The function this client registers so the server can push a
+        change of the value to it (the other side of the setter's
+        sync): it updates this client's copy of the value (the
+        observers and the ``on_change`` callback run, as with a local
+        update), and returns a coroutine that drives them."""
+
+        def push(value: Any) -> Any:
+            async def _run() -> Any:
+                result = self._signal._setter(value)
+                if iscoroutine(result):
+                    return await result
+
+            return _run()
+
+        return push
+
+    def __iter__(self) -> Iterator[Any]:
+        """The getter and the setter, in that order (so the pair can be
+        unpacked::
+
+            get_count, set_count = k.shared_signal(0)
+
+        ``get_count`` is a :class:`_SharedSignalGetter` (call it and
+        await it for the value) and ``set_count`` a
+        :class:`_SharedSignalSetter` (call it with a value and await
+        it); the element type is left as ``Any`` because the two
+        halves are different callables).
+        """
+        yield self._getter
+        yield self._setter
+
+    def __repr__(self) -> str:
+        return f"<SharedSignal {self._signal._cell[0]!r}>"

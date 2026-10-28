@@ -20,7 +20,16 @@ from typing import Any
 
 from browser import DOMNode, aio, document, html, window, websocket
 
-from ..common import Client, KopisBase, RPCHandle, RpcError, WS_PATH, decode, encode
+from ..common import (
+    Client,
+    KopisBase,
+    RPCHandle,
+    RpcError,
+    SharedSignal,
+    WS_PATH,
+    decode,
+    encode,
+)
 from ..common.handle import _HandleAttr
 from .dom import _StandIn
 from .parser import parse_html
@@ -234,6 +243,20 @@ class Kopis(KopisBase):
             "routes calls to clients); on the client, call the server "
             "with k.rpc.<name>(...)"
         )
+
+    async def _sync_shared_signal(self, shared: SharedSignal, value: Any) -> None:
+        """Send a change of a shared signal's value to the server (whose
+        copy of the value is the shared one — it applies it, and pushes
+        it to the other clients), and then apply it to this client's
+        copy of the value (the observers of it run, and its
+        ``on_change`` callback, if any, is called) — after the server's
+        result, so a re-read of the value never fetches a value the
+        server has not applied yet.
+        """
+        await self._rpc_call(shared._setter_name, (value,), {})
+        result = shared._signal._setter(value)
+        if iscoroutine(result):
+            await result
 
     async def _rpc_call(
         self, name: str, args: tuple[object, ...], kwargs: dict[str, object]

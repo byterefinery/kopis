@@ -35,7 +35,7 @@ import javascript
 from .app import Kopis
 from .component import Component
 from .dom import install as _install_dom
-from ..common import Client, Effect, RPCHandle, RpcError, Signal
+from ..common import Client, Effect, RPCHandle, RpcError, SharedSignal, Signal
 
 __all__ = [
     "Client",
@@ -46,6 +46,7 @@ __all__ = [
     "Kopis",
     "RPCHandle",
     "RpcError",
+    "SharedSignal",
     "Signal",
     "aio",
     "ajax",

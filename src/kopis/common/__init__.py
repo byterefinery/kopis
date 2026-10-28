@@ -10,7 +10,9 @@ RPC wire format (:mod:`~kopis.common.wire`), the ``Kopis`` base class
 be serialized — the live object stays on the side where it is, and the
 other side operates on it through the handle — the ``Signal`` class
 (:mod:`~kopis.common.signal`), a single value with a getter and a
-setter, in the spirit of solidjs signals, and the ``Effect`` class
+setter, in the spirit of solidjs signals, the ``SharedSignal`` class
+(a :class:`~kopis.common.signal.SharedSignal` — a signal whose value is
+shared between the server and the clients), and the ``Effect`` class
 (:mod:`~kopis.common.effect`), a reactive scope of the signals, in the
 spirit of solidjs's ``createEffect`` — the client-side dependencies
 for ``k.use`` (:mod:`~kopis.common.uses`), and the ``Magic`` dummy
@@ -23,7 +25,7 @@ from .base import Client, KopisBase
 from .effect import Effect
 from .handle import RPCHandle
 from .magic import Magic
-from .signal import Signal
+from .signal import SharedSignal, Signal
 from .uses import USES
 from .wire import RpcError, WS_PATH, decode, encode
 
@@ -36,6 +38,7 @@ __all__ = [
     "Magic",
     "RPCHandle",
     "RpcError",
+    "SharedSignal",
     "Signal",
     "decode",
     "encode",
