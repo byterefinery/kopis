@@ -25,6 +25,10 @@ the two sides do the same way:
   the server, where there is no live window;
 - the ``html`` property — the ``browser.html`` builder on the client,
   a stand-in on the server;
+- :meth:`signal` (the app's way to make a :class:`~kopis.common.Signal`)
+  and :meth:`effect` (the app's way to make an
+  :class:`~kopis.common.Effect` scope) — the reactive primitives of
+  the app, the same objects the classes make directly;
 - :meth:`register` (the canonical way ``k.rpc.register``, and the
   short way ``k.register``), and the registry of the functions
   registered with it;
@@ -59,8 +63,10 @@ from itertools import count
 from pathlib import Path
 from typing import Any, Self
 
+from .effect import Effect
 from .handle import RPCHandle, _HandleAttr
 from .magic import _event_name, _on_decorator
+from .signal import Signal, _SignalGetter
 from .uses import USES
 from .wire import RpcError
 
@@ -70,6 +76,13 @@ __all__ = ["Client", "KopisBase"]
 class _RpcCall:
     """``k.rpc.name`` (and the short way ``k.name``): a callable that
     calls the function ``name`` registered on the other side.
+
+    When the function registered on this side under the same name is a
+    signal getter, the call is also a read of that getter on this side
+    (a local read for tracking: inside a tracked read — a reactive
+    child of a component — it observes the signal, so a change of the
+    signal re-runs the read and re-fetches the value; the value of the
+    read still comes from the other side).
 
     An ``on<event>`` read of it (``k.name.onclick``) is the no-op
     decorator of the decorator form, so unified code that binds an
@@ -88,6 +101,16 @@ class _RpcCall:
         object.__setattr__(self, "_name", name)
 
     def __call__(self, *args: object, **kwargs: object) -> object:
+        # The local read of a getter registered on this side under the
+        # same name: inside a tracked read (a reactive child of a
+        # component) it observes the getter's signal, as any signal
+        # read in the tracking scope does, so a change of the signal
+        # re-runs the read (which re-fetches the value from the other
+        # side); the local value itself is not used. Outside a
+        # tracking scope the read has no effect.
+        func = self._owner._bound.get(self._name)
+        if isinstance(func, _SignalGetter):
+            func()
         return self._owner._rpc_call(self._name, args, kwargs)
 
     def __getattr__(self, name: str) -> Any:
@@ -310,6 +333,34 @@ class KopisBase(ABC):
                 else:
                     head.attach(element)
         return self
+
+    def signal(
+        self,
+        value: Any,
+        on_change: Callable[[Signal, Any], Any] | None = None,
+    ) -> Signal:
+        """A :class:`~kopis.common.signal.Signal` of the application.
+
+        The app's way to make a :class:`Signal` (the class can be used
+        directly, and works the same way): ``signal = k.signal(0,
+        count_changed)``, ``get_count, set_count = signal`` — see the
+        class for the pair's behaviour. The signal holds this side's
+        value, as with everything else on this side.
+        """
+        return Signal(value, on_change)
+
+    def effect(self) -> Effect:
+        """An :class:`~kopis.common.effect.Effect` scope of the
+        application (solidjs's ``createEffect``).
+
+        The app's way to make an :class:`Effect` (the class can be used
+        directly, and works the same way): ``with k.effect():`` makes
+        the code of the block reactive — a signal read in the block
+        (a getter child of a component) is observed, and is updated in
+        place when the signal changes (see the class for the scope's
+        behaviour).
+        """
+        return Effect()
 
     def addEventListener(
         self, event: str, func: Callable[..., Any], options: Any = None

@@ -16,10 +16,11 @@ the running Python implementation:
 and to the client side in browser code. Both sides expose the same
 unified API — ``Kopis`` (with ``register``, ``rpc``, ``call``,
 ``clients``, ``document``, ``html``, ``add_static_file``,
-``parse_html``, and ``run``), the
-``Signal`` class, the ``Client`` proxy of a connected client, the
-``Component`` base of the components (a component instance is its own
-root element — see ``kopis.common.component``), and the brython objects
+``parse_html``, ``run``, ``signal``, and ``effect``), the ``Signal``
+class, the ``Effect`` class, the ``Client`` proxy of a connected
+client, the ``Component`` base of the components (a component instance
+is its own root element — see ``kopis.common.component``), and the
+brython objects
 ``document``,
 ``DOMNode``, ``DOMEvent``, ``bind``, ``html``, ``aio``, ``ajax``,
 ``timer``, ``window``, and ``javascript`` — so a single application file
@@ -69,6 +70,7 @@ __all__ = [
     "Component",
     "DOMEvent",
     "DOMNode",
+    "Effect",
     "Kopis",
     "RPCHandle",
     "RpcError",
@@ -89,6 +91,7 @@ if IS_CLIENT:
     from .client import (
         Client,
         Component,
+        Effect,
         Kopis,
         RPCHandle,
         RpcError,
@@ -110,6 +113,7 @@ else:
     from .server import (
         Client,
         Component,
+        Effect,
         Kopis,
         RPCHandle,
         RpcError,

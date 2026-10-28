@@ -10,7 +10,9 @@ RPC wire format (:mod:`~kopis.common.wire`), the ``Kopis`` base class
 be serialized — the live object stays on the side where it is, and the
 other side operates on it through the handle — the ``Signal`` class
 (:mod:`~kopis.common.signal`), a single value with a getter and a
-setter, in the spirit of solidjs signals — the client-side dependencies
+setter, in the spirit of solidjs signals, and the ``Effect`` class
+(:mod:`~kopis.common.effect`), a reactive scope of the signals, in the
+spirit of solidjs's ``createEffect`` — the client-side dependencies
 for ``k.use`` (:mod:`~kopis.common.uses`), and the ``Magic`` dummy
 stand-in (:mod:`~kopis.common.magic`), which the server uses for the
 brython ``browser`` and ``javascript`` objects it has no live version
@@ -18,6 +20,7 @@ of.
 """
 
 from .base import Client, KopisBase
+from .effect import Effect
 from .handle import RPCHandle
 from .magic import Magic
 from .signal import Signal
@@ -28,6 +31,7 @@ __all__ = [
     "USES",
     "WS_PATH",
     "Client",
+    "Effect",
     "KopisBase",
     "Magic",
     "RPCHandle",

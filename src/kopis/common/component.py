@@ -29,6 +29,10 @@ element, in the standard (W3C/MDN) names of the DOM — ``id``, ``onclick``
         Button("Demo", id="btn0", class_="btn-primary", onclick=click)
         Button(get_count, id="btn1")   # a function is a child, too:
                                        # it is called to get the value
+                                       # (in an effect scope it is
+                                       # tracked, and follows the signal
+                                       # — as does a call of a registered
+                                       # signal getter in it)
 
     with Card():                      # a component block: the children of
         CardTitle("Count")           # the block go into the component
@@ -45,6 +49,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from inspect import iscoroutine
 from typing import Any
+
+from .signal import _effect_scope
 
 __all__ = ["make_component"]
 
@@ -75,6 +81,7 @@ def make_component(
     create_element: Callable[[str], Any],
     enter: Callable[[Any], Any] | None = None,
     resolve_async: Callable[[Any, Any], Any] | None = None,
+    reactive: Callable[[Any, Any], Any] | None = None,
 ) -> type:
     """Build a ``Component`` class over the ``DOMNode`` class ``base``.
 
@@ -82,12 +89,16 @@ def make_component(
     ``document.createElement`` — the client's extension appends it to
     the innermost active ``with element:`` block, as with any other
     element), ``enter`` (the client side) overrides ``__enter__``
-    with the ``with component:`` block form of the side, and
+    with the ``with component:`` block form of the side,
     ``resolve_async`` (the client side) handles a child function that
     returns a coroutine (the client reserves the value's position with
     a placeholder and fills it when the coroutine resolves; without it,
     the server default, the coroutine is discarded, as the server has
-    no live DOM).
+    no live DOM), and ``reactive`` (the client side) handles a child
+    function in an active effect scope (``with k.effect():``): the
+    client reads the value through the scope (tracked), and updates it
+    in place when the signal it reads changes — see
+    :mod:`kopis.client.component`.
 
     The class is built with ``type`` and every method goes into its own
     namespace: under Brython a ``DOMNode`` subclass resolves its dunders
@@ -122,7 +133,15 @@ def make_component(
         returns is resolved by ``resolve_async`` (the client reserves
         the value's position with a placeholder and fills it when the
         coroutine resolves; the server discards it, as it has no live
-        DOM). ``attrs`` are set on the element in the standard DOM
+        DOM). A function child in an active effect scope
+        (``with k.effect():``) is handled by ``reactive`` instead: the
+        side reads the value through the scope (tracked — a signal read
+        in the read registers the read as an observer of the signal, as
+        does a call of a registered signal getter in it, see
+        :class:`~kopis.common.base._RpcCall`), and updates the value in
+        place when the signal it read changes (the client does; the
+        server has no ``reactive``, and calls the function as usual).
+        ``attrs`` are set on the element in the standard DOM
         names: an ``on<event>`` key (``onclick``, ...) is an event
         handler (bound on the client, a no-op on the server), and any
         other key is an attribute (underscores map to hyphens).
@@ -144,18 +163,25 @@ def make_component(
             self[_attr_name(key)] = value
         for child in children:
             if callable(child):
-                value = child()
-                if iscoroutine(value):
-                    # The value arrives later: the side resolves the
-                    # coroutine (the client fills the element when it
-                    # resolves; the server discards it, as it has no
-                    # live DOM).
-                    if resolve_async is not None:
-                        resolve_async(self, value)
-                    else:
-                        value.close()
+                if reactive is not None and _effect_scope() is not None:
+                    # A function child in an active effect scope: the
+                    # side tracks the read, and updates the value in
+                    # place when the signal it reads changes (see the
+                    # ``reactive`` parameter of this function).
+                    reactive(self, child)
                 else:
-                    self <= _child_value(value)
+                    value = child()
+                    if iscoroutine(value):
+                        # The value arrives later: the side resolves
+                        # the coroutine (the client fills the element
+                        # when it resolves; the server discards it, as
+                        # it has no live DOM).
+                        if resolve_async is not None:
+                            resolve_async(self, value)
+                        else:
+                            value.close()
+                    else:
+                        self <= _child_value(value)
             else:
                 self <= _child_value(child)
 

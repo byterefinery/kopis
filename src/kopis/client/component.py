@@ -23,11 +23,29 @@ appended, anything else becomes text), and a coroutine it returns is
 started with ``aio.run`` — an empty text node reserves the value's
 position among the element's children, and when the coroutine resolves,
 the placeholder is replaced with the value.
+
+A child that is a function in an active effect scope
+(``with k.effect():``) is reactive, in the spirit of solidjs: the value
+is read through the scope (a signal it reads registers the read as an
+observer of the signal), and is held in the element's children — the
+nodes of the current value, in order — that are replaced in place
+whenever one of the signals it reads changes (the read is re-done, and
+the new value — a value or the resolution of a new coroutine — takes
+the value's place among the children). A call of a registered signal
+getter in the read (``k.get_count()`` — a getter registered with
+``k.register`` on this side) is a read of that getter, and is tracked
+the same way (see :class:`~kopis.common.base._RpcCall`). A re-done read
+supersedes the previous one, and a pending resolution of a superseded
+read is dropped: the reads' resolutions are not ordered among
+themselves, and the value of the newest read wins.
 """
 
 from browser import DOMNode, aio, document
+from inspect import iscoroutine
+from typing import Any
 
 from ..common.component import make_component
+from ..common.signal import _effect_scope
 from .dom import _fragment_nodes, _native_create_text_node, _scope
 
 __all__ = ["Component"]
@@ -71,10 +89,89 @@ def _resolve_async(self: DOMNode, coro) -> None:
     aio.run(fill())
 
 
+def _reactive(self: DOMNode, child: object) -> None:
+    """A function child in an active effect scope: the value is read
+    through the scope (tracked), and is held in the element's children
+    (the nodes of the current value, in order), replaced in place
+    whenever one of the signals the child read changes (see the module
+    docstring).
+
+    A read supersedes the previous one: the resolutions of the reads
+    are not ordered among themselves (they are round trips of their
+    own), so a pending resolution of a superseded read is dropped —
+    the value of the newest read wins."""
+    scope = _effect_scope()
+    # The nodes of the child's current value, in order (a single empty
+    # text node at the start, the placeholder of the value to come).
+    nodes: list[DOMNode] = [_native_create_text_node("")]
+    self.appendChild(nodes[0])
+    # The generation of the read (a read is superseded by the next one):
+    # a pending resolution of a superseded read is dropped, so a slow
+    # value of an older read cannot overwrite the value of a newer one
+    # (the reads' resolutions are not ordered among themselves).
+    generation = [0]
+
+    def replace(value: Any) -> None:
+        """The new value takes the place of the current one among the
+        element's children (the nodes of it are remembered, for the
+        next value)."""
+        if isinstance(value, str):
+            new = _fragment_nodes(value)
+        elif hasattr(value, "appendChild"):
+            new = [value]
+        else:
+            new = [_native_create_text_node(str(value))]
+        if not new:
+            new = [_native_create_text_node("")]
+        parent = nodes[0].parentNode
+        if parent is None:
+            return
+        ref = nodes[-1].nextSibling
+        for node in nodes:
+            parent.removeChild(node)
+        for node in new:
+            parent.insertBefore(node, ref)
+        nodes[:] = new
+
+    def render(value: Any) -> None:
+        """Render the value of the read (the read is a new generation:
+        a coroutine is started with ``aio.run``, and the value takes
+        its place when it resolves, unless a newer read has come).
+        """
+        generation[0] += 1
+        gen = generation[0]
+        if iscoroutine(value):
+
+            async def resolve() -> None:
+                try:
+                    resolved = await value
+                except Exception as exc:  # noqa: BLE001 - a failed child keeps the page alive
+                    print(f"kopis: a child function failed: {exc}")
+                    return
+                if gen != generation[0]:
+                    # Superseded by a newer read: the newer value wins.
+                    return
+                replace(resolved)
+
+            aio.run(resolve())
+            return
+        replace(value)
+
+    def update() -> None:
+        """The observer of the change of a signal the child read: the
+        read is re-done through the scope (re-tracked, as a solidjs
+        effect re-tracks on every re-run), and the new value is
+        rendered in place."""
+        render(scope.track(child, update))
+
+    render(scope.track(child, update))
+
+
 #: The client-side ``Component`` class.
 Component = make_component(
     DOMNode,
     lambda tag: document.createElement(tag),
     _enter,
     _resolve_async,
+    _reactive,
 )

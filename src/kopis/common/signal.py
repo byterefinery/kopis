@@ -42,6 +42,15 @@ Like any other value, a getter or setter that cannot be pickled does not
 travel: sending one over RPC raises, and the developer wraps it in an
 explicit :class:`~kopis.common.RPCHandle` (``k.get_handle``) if it
 should.
+
+A signal also has observers, in the spirit of solidjs: a getter read
+inside an :class:`~kopis.common.effect.Effect` scope that is tracking a
+read (a getter child of a component — see
+:mod:`kopis.common.component`) registers the read's update callback as
+an observer of the signal, and an update of the signal's value (to a
+value different from the current one) runs the observers, so the read
+is re-done and its value re-rendered in place. See
+:mod:`kopis.common.effect` for the scope.
 """
 
 from __future__ import annotations
@@ -52,6 +61,17 @@ from pickle import PicklingError
 from typing import Any, NoReturn
 
 __all__ = ["Signal"]
+
+#: The stack of the active effect scopes (innermost last): the scope a
+#: signal read runs in (see :class:`~kopis.common.effect.Effect`).
+_scopes: list[Any] = []
+
+
+def _effect_scope() -> Any:
+    """The innermost active effect scope, else ``None`` (see
+    :class:`~kopis.common.effect.Effect`)."""
+    return _scopes[-1] if _scopes else None
+
 
 #: How far up the stack :func:`_bound_name` looks for the name the object
 #: is bound to (a search that goes past the application's own frames is
@@ -73,13 +93,25 @@ class _SignalGetter:
 
     _cell: list[Any]
     _fallback_name: str
+    _signal: Signal
 
-    def __init__(self, cell: list[Any], fallback_name: str) -> None:
+    def __init__(self, cell: list[Any], fallback_name: str, signal: Signal) -> None:
         object.__setattr__(self, "_cell", cell)
         object.__setattr__(self, "_fallback_name", fallback_name)
+        object.__setattr__(self, "_signal", signal)
 
     def __call__(self) -> Any:
-        """The signal's current value."""
+        """The signal's current value.
+
+        A read in an active effect scope that is tracking a read (a
+        getter child of a component — see
+        :mod:`kopis.common.component`) registers the scope's update
+        callback as an observer of the signal: a change of the signal
+        re-runs the callback (which re-reads and re-renders the value).
+        """
+        scope = _scopes[-1] if _scopes else None
+        if scope is not None and scope._tracking is not None:
+            scope.observe(self._signal, scope._tracking)
         return self._cell[0]
 
     @property
@@ -123,15 +155,30 @@ class _SignalSetter:
         object.__setattr__(self, "_on_change", on_change)
 
     def __call__(self, value: Any) -> Any:
-        """Update the signal's value to ``value``.
+        """Update the signal's value to ``value``, and notify the
+        signal's observers of the change.
 
-        If the signal was given an ``on_change`` callback, it is called
-        with the signal and ``value`` after the update, and its result
-        is returned: a synchronous callback returns ``None``, and an
-        async one returns its coroutine, so the caller drives it with
+        The observers (the reads of the value that an
+        :class:`~kopis.common.effect.Effect` scope registered, in the
+        solidjs way) are run when the value actually changed (to a
+        value different from the current one), before the
+        ``on_change`` callback — the local updates first, then the
+        broadcast of the change, if any. If the signal was given an
+        ``on_change`` callback, it is called with the signal and
+        ``value`` after the update, and its result is returned: a
+        synchronous callback returns ``None``, and an async one returns
+        its coroutine, so the caller drives it with
         ``await set_count(value)``.
         """
+        current = self._cell[0]
         self._cell[0] = value
+        try:
+            changed = value != current
+        except Exception:  # noqa: BLE001 - a broken == still updates the value
+            changed = value is not current
+        if changed:
+            for observer in list(self._signal._observers):
+                observer()
         on_change = self._on_change
         if on_change is not None:
             return on_change(self._signal, value)
@@ -244,11 +291,20 @@ class Signal:
     ``"get_count"`` and the other side calls it as ``k.get_count()``
     (as with any registered function, the RPC name is the function's
     ``__name__``).
+
+    The signal has observers, in the spirit of solidjs: a getter read
+    inside an :class:`~kopis.common.effect.Effect` scope that is
+    tracking a read (a getter child of a component — see
+    :mod:`kopis.common.component`) registers the read's update callback
+    as an observer, and an update of the value (to a value different
+    from the current one) runs the observers, so the read is re-done
+    and its value re-rendered in place.
     """
 
     _cell: list[Any]
     _getter: _SignalGetter
     _setter: _SignalSetter
+    _observers: list[Callable[[], Any]]
 
     def __init__(
         self,
@@ -257,12 +313,28 @@ class Signal:
     ) -> None:
         cell: list[Any] = [value]
         object.__setattr__(self, "_cell", cell)
-        object.__setattr__(self, "_getter", _SignalGetter(cell, "get"))
+        object.__setattr__(self, "_observers", [])
+        object.__setattr__(self, "_getter", _SignalGetter(cell, "get", self))
         object.__setattr__(
             self,
             "_setter",
             _SignalSetter(cell, "set", self, on_change),
         )
+
+    def _observe(self, callback: Callable[[], Any]) -> None:
+        """Register ``callback`` as an observer of the change (a no-op
+        if it is already registered): an update of the value runs the
+        observers (see the class docstring)."""
+        if callback not in self._observers:
+            self._observers.append(callback)
+
+    def _forget(self, callback: Callable[[], Any]) -> None:
+        """Remove the observer ``callback`` (a no-op if it is not
+        registered)."""
+        try:
+            self._observers.remove(callback)
+        except ValueError:
+            pass
 
     def __iter__(self) -> Iterator[Any]:
         """The getter and the setter, in that order (so the pair can be
