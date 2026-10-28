@@ -34,9 +34,8 @@ element, in the standard (W3C/MDN) names of the DOM — ``id``, ``onclick``
 
 The class attributes ``tag`` and ``classes`` fix the root element's tag
 and the classes it always has (a component library like
-``kopis.daisyui`` builds on them); ``join_classes`` helps a subconstructor
-assemble modifier classes (``btn-primary`` for ``variant="primary"``)
-with the classes the caller gives.
+``kopis.daisyui`` builds on them); the classes the caller gives in
+``class_`` are merged with them.
 """
 
 from __future__ import annotations
@@ -121,21 +120,6 @@ def make_component(
         for child in children:
             self <= child
 
-    def join_classes(*groups: Any) -> str:
-        """Join class groups (strings or iterables of strings), in
-        order, dropping the empty ones: the helper a subconstructor
-        uses to assemble its modifier classes (``btn-primary`` for
-        ``variant="primary"``) with the classes the caller gives."""
-        out: list[str] = []
-        for group in groups:
-            if not group:
-                continue
-            if isinstance(group, str):
-                out += group.split()
-            else:
-                out += list(group)
-        return " ".join(out)
-
     def el(self: Any) -> Any:
         """The component's root element: the component itself (a
         component is its own element)."""
@@ -150,7 +134,6 @@ def make_component(
         "classes": (),
         "__new__": __new__,
         "__init__": __init__,
-        "join_classes": staticmethod(join_classes),
         "el": property(el),
     }
     if enter is not None:

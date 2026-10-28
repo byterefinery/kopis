@@ -20,8 +20,13 @@ everywhere an element is::
     with k.document.body:
         with Card():
             CardTitle("Count")
-            Button("Increment", id="inc", class_="btn-primary",
+            Button("Increment", id="inc", class_="btn-primary btn-sm",
                    onclick=increment)
+
+The components use the real daisyUI class names: each fixes only the
+classes of its root element (``btn``, ``badge``, ``card``, ...), and
+every modifier (size, color, shape, ...) is given by the caller as the
+full daisyUI class in ``class_``.
 """
 
 from typing import Any
@@ -29,9 +34,8 @@ from typing import Any
 from kopis import Component as _Component
 
 # ``kopis.Component`` is the client-side or the server-side class, resolved
-# by the ``kopis`` package at import time (a component instance is its own
-# root element on either side). The union of the two is not a valid class
-# base, so the name is widened for the subclasses below.
+# by the ``kopis`` package at import time. The union of the two is not a
+# valid class base, so the name is widened for the subclasses below.
 Component: Any = _Component
 
 __all__ = [
@@ -49,61 +53,25 @@ __all__ = [
 class Button(Component):
     """A daisyUI button: ``<button class="btn">``.
 
-    ``variant`` (``primary``, ``secondary``, ``accent``, ``success``,
-    ``warning``, ``error``, ``ghost``, ``link``, ``outline``) adds
-    ``btn-<variant>``, ``size`` (``xs``, ``sm``, ``md``, ``lg``, ``xl``)
-    adds ``btn-<size>``, and ``shape`` (``circle``, ``box``, ``wide``,
-    ``soft``) adds ``btn-<shape>``. The standard attributes of the ``<button>``
-    element pass through (``id``, ``onclick``, ``disabled``, ``type``,
-    ``value``, ...).
+    The daisyUI modifiers are the full class names, given in ``class_``
+    (``btn-primary``, ``btn-sm``, ``btn-circle``, ...). The standard
+    attributes of the ``<button>`` element pass through (``id``,
+    ``onclick``, ``disabled``, ``type``, ``value``, ...).
     """
 
     tag = "button"
     classes = ("btn",)
 
-    def __init__(
-        self,
-        *children: object,
-        variant: object = None,
-        size: object = None,
-        shape: object = None,
-        **attrs: object,
-    ) -> None:
-        mods = [f"btn-{v}" for v in (variant, size, shape) if v is not None]
-        if mods:
-            given = attrs.pop("class_", None)
-            if given is None:
-                given = attrs.pop("class", None)
-            attrs["class_"] = Component.join_classes(mods, given)
-        Component.__init__(self, *children, **attrs)
-
 
 class Badge(Component):
     """A daisyUI badge: ``<span class="badge">``.
 
-    ``variant`` (``primary``, ``secondary``, ``accent``, ``success``,
-    ``warning``, ``error``, ``ghost``, ``outline``) adds
-    ``badge-<variant>``, and ``size`` (``xs``, ``sm``, ``lg``) adds
-    ``badge-<size>``.
+    The daisyUI modifiers are the full class names, given in ``class_``
+    (``badge-primary``, ``badge-lg``, ...).
     """
 
     tag = "span"
     classes = ("badge",)
-
-    def __init__(
-        self,
-        *children: object,
-        variant: object = None,
-        size: object = None,
-        **attrs: object,
-    ) -> None:
-        mods = [f"badge-{v}" for v in (variant, size) if v is not None]
-        if mods:
-            given = attrs.pop("class_", None)
-            if given is None:
-                given = attrs.pop("class", None)
-            attrs["class_"] = Component.join_classes(mods, given)
-        Component.__init__(self, *children, **attrs)
 
 
 class Card(Component):

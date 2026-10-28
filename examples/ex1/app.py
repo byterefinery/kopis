@@ -11,11 +11,12 @@ async def btn0_click(e: DOMEvent):
     print("btn0_click", e, e.detail)
     v: int = await k.inc_count()
     print(f"{v=}")
-    k.btn0.innerHTML = v
+    e.target.innerHTML = v
 
 
 with k.document.body:
-    Button("Demo 1", id="btn0", class_="btn-primary", onclick=btn0_click)
+    Button("Demo 0", id="btn0", class_="btn-primary", onclick=btn0_click)
+    Button("Demo 1", id="btn1", class_="btn-primary", onclick=btn0_click)
 
 
 async def count_changed(signal: Signal, new_value: int):
@@ -42,6 +43,7 @@ async def inc_count():
 async def update_count():
     print("update_count")
     k.btn0.innerHTML = await k.get_count()
+    k.btn1.innerHTML = await k.get_count()
 
 
 @k.window.onload
