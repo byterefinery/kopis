@@ -1,0 +1,158 @@
+"""The ``Component`` classes (the part shared by both sides).
+
+A *component* is a class that builds a piece of the document. A
+component instance is **its own root element**: each side builds its
+:class:`~kopis.Component` class with :func:`make_component` over its own
+``DOMNode`` class, and the instance is created with
+``document.createElement(tag)`` and reclassified into the component
+class — so the brython element interface works on a component directly:
+``<=`` (append), ``+`` (group), ``*`` (clone), attribute subscripts
+(``component["id"]``), event handlers (``component.onclick`` or
+``component["onclick"]``), iteration over the children, and the ``with
+component:`` block form (children created in the block go into the
+component). A component is therefore usable everywhere an element is:
+``document.body <= button``, ``k.btn0`` (by id), or as a child of another
+component.
+
+The constructor takes the children and the attributes of the root
+element, in the standard (W3C/MDN) names of the DOM — ``id``, ``onclick``
+(an event handler), ``disabled``, ``placeholder``, ``class_`` (the
+``class`` attribute; ``class`` is a Python keyword), ``data_x`` for
+``data-x``, and so on (underscores map to hyphens, as in brython's
+``html`` builder)::
+
+    class Button(Component):          # a component is a class
+        tag = "button"
+        classes = ("btn",)
+
+    with k.document.body:             # created in a block: appended there
+        Button("Demo", id="btn0", class_="btn-primary", onclick=click)
+
+    with Card():                      # a component block: the children of
+        CardTitle("Count")           # the block go into the component
+        Button("Increment")
+
+The class attributes ``tag`` and ``classes`` fix the root element's tag
+and the classes it always has (a component library like
+``kopis.daisyui`` builds on them); ``join_classes`` helps a subconstructor
+assemble modifier classes (``btn-primary`` for ``variant="primary"``)
+with the classes the caller gives.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+__all__ = ["make_component"]
+
+
+def _attr_name(key: object) -> object:
+    """The standard name of an attribute keyword argument: ``class_`` is
+    the ``class`` attribute, and any other underscores map to hyphens
+    (``data_theme`` is ``data-theme``), as in brython's ``html``
+    builder."""
+    if key == "class_":
+        return "class"
+    if isinstance(key, str):
+        return key.replace("_", "-")
+    return key
+
+
+def make_component(
+    base: type,
+    create_element: Callable[[str], Any],
+    enter: Callable[[Any], Any] | None = None,
+) -> type:
+    """Build a ``Component`` class over the ``DOMNode`` class ``base``.
+
+    ``create_element(tag)`` makes the root element (the side's
+    ``document.createElement`` — the client's extension appends it to
+    the innermost active ``with element:`` block, as with any other
+    element), and ``enter`` (the client side) overrides ``__enter__``
+    with the ``with component:`` block form of the side.
+
+    The class is built with ``type`` and every method goes into its own
+    namespace: under Brython a ``DOMNode`` subclass resolves its dunders
+    (``__iter__``, ...) only through the ``DOMNode`` base, and an
+    ``__init__`` found below it is never called — so the shared logic
+    cannot live in a mixin between the class and its ``DOMNode`` base.
+    """
+
+    def __new__(cls: Any, *args: object, **kwargs: object) -> Any:
+        """Create the root element and turn it into a component.
+
+        A ``DOMNode`` instance cannot be built from Python (brython
+        binds the element to the instance itself), so the instance is
+        the element created for it, reclassified into the component
+        class — the same way ``document`` gets its attribute access by
+        id (see :mod:`kopis.client.dom`).
+        """
+        element = create_element(cls.tag)
+        object.__setattr__(element, "__class__", cls)
+        return element
+
+    def __init__(self: Any, *children: Any, **attrs: Any) -> None:
+        """Build the root element.
+
+        ``children`` are appended to it, in order: a string is text or
+        markup (parsed as a fragment on the client), and a ``DOMNode``
+        or another component is an element (one already elsewhere moves
+        here, as in the DOM). ``attrs`` are set on the element in the
+        standard DOM names: an ``on<event>`` key (``onclick``, ...) is an
+        event handler (bound on the client, a no-op on the server), and
+        any other key is an attribute (underscores map to hyphens).
+        ``class_`` (or ``class``) is the ``class`` attribute, merged
+        after the component's own ``classes``.
+        """
+        given = attrs.pop("class_", None)
+        if given is None:
+            given = attrs.pop("class", None)
+        classes = list(self.classes)
+        if given:
+            classes += given.split()
+        if classes:
+            attrs["class"] = " ".join(classes)
+        for key, value in attrs.items():
+            # The ``__setitem__`` of the ``DOMNode`` base: an
+            # ``on<event>`` key binds the event handler, any other key
+            # sets the attribute.
+            self[_attr_name(key)] = value
+        for child in children:
+            self <= child
+
+    def join_classes(*groups: Any) -> str:
+        """Join class groups (strings or iterables of strings), in
+        order, dropping the empty ones: the helper a subconstructor
+        uses to assemble its modifier classes (``btn-primary`` for
+        ``variant="primary"``) with the classes the caller gives."""
+        out: list[str] = []
+        for group in groups:
+            if not group:
+                continue
+            if isinstance(group, str):
+                out += group.split()
+            else:
+                out += list(group)
+        return " ".join(out)
+
+    def el(self: Any) -> Any:
+        """The component's root element: the component itself (a
+        component is its own element)."""
+        return self
+
+    namespace: dict[str, Any] = {
+        "__doc__": (
+            "A component of the document: a class whose instances are "
+            "their own root elements (see kopis.common.component)."
+        ),
+        "tag": "div",
+        "classes": (),
+        "__new__": __new__,
+        "__init__": __init__,
+        "join_classes": staticmethod(join_classes),
+        "el": property(el),
+    }
+    if enter is not None:
+        namespace["__enter__"] = enter
+    return type("Component", (base,), namespace)

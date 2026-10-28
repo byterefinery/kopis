@@ -33,11 +33,13 @@ from browser import (
 import javascript
 
 from .app import Kopis
+from .component import Component
 from .dom import install as _install_dom
 from ..common import Client, RPCHandle, RpcError, Signal
 
 __all__ = [
     "Client",
+    "Component",
     "DOMEvent",
     "DOMNode",
     "Kopis",

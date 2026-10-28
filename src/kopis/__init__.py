@@ -17,8 +17,10 @@ and to the client side in browser code. Both sides expose the same
 unified API — ``Kopis`` (with ``register``, ``rpc``, ``call``,
 ``clients``, ``document``, ``html``, ``add_static_file``,
 ``parse_html``, and ``run``), the
-``Signal`` class, the ``Client`` proxy of a connected client, and the
-brython objects ``document``,
+``Signal`` class, the ``Client`` proxy of a connected client, the
+``Component`` base of the components (a component instance is its own
+root element — see ``kopis.common.component``), and the brython objects
+``document``,
 ``DOMNode``, ``DOMEvent``, ``bind``, ``html``, ``aio``, ``ajax``,
 ``timer``, ``window``, and ``javascript`` — so a single application file
 can run unmodified on both sides; only the implementations differ
@@ -64,6 +66,7 @@ __all__ = [
     "IS_CLIENT",
     "IS_SERVER",
     "Client",
+    "Component",
     "DOMEvent",
     "DOMNode",
     "Kopis",
@@ -85,6 +88,7 @@ if IS_CLIENT:
     # built-ins are re-exported under the unified names.
     from .client import (
         Client,
+        Component,
         Kopis,
         RPCHandle,
         RpcError,
@@ -105,6 +109,7 @@ else:
     # objects are re-exported under the same unified names.
     from .server import (
         Client,
+        Component,
         Kopis,
         RPCHandle,
         RpcError,

@@ -179,6 +179,12 @@ __all__ = ["install"]
 # to the block's element.
 _scope: list[DOMNode] = []
 
+# The original (unpatched) ``document.createElement`` — read before the
+# extension patches it: it makes the nodes that must not join the
+# innermost active ``with element:`` block (the ``<template>`` that
+# parses a fragment, a fresh ``<script>`` that replaces a parsed one).
+_native_create_element = document.createElement
+
 
 class _StandIn:
     """The app's stand-in of an element of the document (``k.<id>``) or
@@ -307,7 +313,7 @@ def _runnable_script(node: DOMNode) -> DOMNode:
     the live document; a script created with ``document.createElement``
     does run when inserted, so the script is recreated before it is
     attached."""
-    fresh = document.createElement("script")
+    fresh = _native_create_element("script")
     for name, value in node.attrs.items():
         fresh.attrs[name] = value
     fresh.text = node.text
@@ -318,7 +324,7 @@ def _append_fragment(self: DOMNode, html_str: str) -> DOMNode:
     """Append the top-level nodes of the HTML fragment ``html_str``
     (parsed by the browser), in order; a top-level ``<script>`` among
     them is recreated, so that it runs when it is inserted."""
-    tpl = document.createElement("template")
+    tpl = _native_create_element("template")
     tpl.innerHTML = html_str
     # A document node cannot take element children directly; brython's
     # own attach puts them in the body.
@@ -480,7 +486,7 @@ def install() -> None:
             _scope.pop()
         return False
 
-    _orig_create_element = document.createElement
+    _orig_create_element = _native_create_element
 
     def create_element(tag: str, *args: object) -> DOMNode:
         """Create an element (the brython

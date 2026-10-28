@@ -1,5 +1,5 @@
-from collections.abc import Callable
 from kopis import Kopis, DOMEvent, Signal
+from kopis.daisyui import Button
 
 
 k = Kopis()
@@ -14,22 +14,15 @@ async def btn0_click(e: DOMEvent):
     k.btn0.innerHTML = v
 
 
-def Button(text: str, onclick: Callable | None=None):
-    with k.html.button(id="btn0", class_="btn btn-primary", onclick=onclick) as el:
-        k.html.text(text)
-
-    return el
-
-
 with k.document.body:
-    b = Button("Demo 1")
-    b.onclick = btn0_click
+    Button("Demo 1", id="btn0", class_="btn-primary", onclick=btn0_click)
 
 
 async def count_changed(signal: Signal, new_value: int):
     print("count_changed", new_value)
 
     for client in k.clients:
+        print("client", client)
         await client.update_count()
 
 
