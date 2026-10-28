@@ -6,7 +6,8 @@ The stand-in of the client-side ``Component`` (see
 ``browser.DOMNode`` class — the instance is a stand-in element and every
 operation on it does nothing, because the server has no live DOM, and
 the browser builds the real elements by running the same code under
-Brython.
+Brython. A function child is called to get its value, and a coroutine
+result is discarded (there is nothing to render).
 """
 
 from ..common.component import make_component

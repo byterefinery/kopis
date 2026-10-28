@@ -9,14 +9,10 @@ k.use("daisyui")
 
 async def btn0_click(e: DOMEvent):
     print("btn0_click", e, e.detail)
-    v: int = await k.inc_count()
-    print(f"{v=}")
-    e.target.innerHTML = v
-
-
-with k.document.body:
-    Button("Demo 0", id="btn0", class_="btn-primary", onclick=btn0_click)
-    Button("Demo 1", id="btn1", class_="btn-primary", onclick=btn0_click)
+    # v: int = await k.inc_count()
+    # print(f"{v=}")
+    # e.target.innerHTML = v
+    await k.inc_count()
 
 
 async def count_changed(signal: Signal, new_value: int):
@@ -24,12 +20,17 @@ async def count_changed(signal: Signal, new_value: int):
 
     for client in k.clients:
         print("client", client)
-        await client.update_count()
+        # await client.update_count()
 
 
 signal = Signal(0, count_changed)
 get_count, set_count = signal
 get_count = k.register(get_count)
+
+
+with k.document.body:
+    Button(get_count, class_="btn-primary", onclick=btn0_click)
+    Button(k.get_count, class_="btn-primary", onclick=btn0_click)
 
 
 @k.register
@@ -39,17 +40,10 @@ async def inc_count():
     return count
 
 
-@k.register
-async def update_count():
-    print("update_count")
-    k.btn0.innerHTML = await k.get_count()
-    k.btn1.innerHTML = await k.get_count()
-
-
 @k.window.onload
 async def window_load(e: DOMEvent):
     print("window_load", e)
-    await update_count()
+    # await update_count()
 
 
 k.run()

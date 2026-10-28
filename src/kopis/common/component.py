@@ -27,6 +27,8 @@ element, in the standard (W3C/MDN) names of the DOM — ``id``, ``onclick``
 
     with k.document.body:             # created in a block: appended there
         Button("Demo", id="btn0", class_="btn-primary", onclick=click)
+        Button(get_count, id="btn1")   # a function is a child, too:
+                                       # it is called to get the value
 
     with Card():                      # a component block: the children of
         CardTitle("Count")           # the block go into the component
@@ -41,6 +43,7 @@ and the classes it always has (a component library like
 from __future__ import annotations
 
 from collections.abc import Callable
+from inspect import iscoroutine
 from typing import Any
 
 __all__ = ["make_component"]
@@ -58,18 +61,33 @@ def _attr_name(key: object) -> object:
     return key
 
 
+def _child_value(value: object) -> object:
+    """A child's value, ready to be appended: a string or an element
+    passes through as is, and any other value (a number, ...) becomes
+    its ``str`` form as text."""
+    if isinstance(value, str) or hasattr(value, "appendChild"):
+        return value
+    return str(value)
+
+
 def make_component(
     base: type,
     create_element: Callable[[str], Any],
     enter: Callable[[Any], Any] | None = None,
+    resolve_async: Callable[[Any, Any], Any] | None = None,
 ) -> type:
     """Build a ``Component`` class over the ``DOMNode`` class ``base``.
 
     ``create_element(tag)`` makes the root element (the side's
     ``document.createElement`` — the client's extension appends it to
     the innermost active ``with element:`` block, as with any other
-    element), and ``enter`` (the client side) overrides ``__enter__``
-    with the ``with component:`` block form of the side.
+    element), ``enter`` (the client side) overrides ``__enter__``
+    with the ``with component:`` block form of the side, and
+    ``resolve_async`` (the client side) handles a child function that
+    returns a coroutine (the client reserves the value's position with
+    a placeholder and fills it when the coroutine resolves; without it,
+    the server default, the coroutine is discarded, as the server has
+    no live DOM).
 
     The class is built with ``type`` and every method goes into its own
     namespace: under Brython a ``DOMNode`` subclass resolves its dunders
@@ -95,12 +113,19 @@ def make_component(
         """Build the root element.
 
         ``children`` are appended to it, in order: a string is text or
-        markup (parsed as a fragment on the client), and a ``DOMNode``
-        or another component is an element (one already elsewhere moves
-        here, as in the DOM). ``attrs`` are set on the element in the
-        standard DOM names: an ``on<event>`` key (``onclick``, ...) is an
-        event handler (bound on the client, a no-op on the server), and
-        any other key is an attribute (underscores map to hyphens).
+        markup (parsed as a fragment on the client), a ``DOMNode`` or
+        another component is an element (one already elsewhere moves
+        here, as in the DOM), and a function (or a coroutine function)
+        is called, with no arguments, to get the value — a value it
+        returns is appended as if it were given as a child (a number,
+        for example, becomes its ``str`` form), and a coroutine it
+        returns is resolved by ``resolve_async`` (the client reserves
+        the value's position with a placeholder and fills it when the
+        coroutine resolves; the server discards it, as it has no live
+        DOM). ``attrs`` are set on the element in the standard DOM
+        names: an ``on<event>`` key (``onclick``, ...) is an event
+        handler (bound on the client, a no-op on the server), and any
+        other key is an attribute (underscores map to hyphens).
         ``class_`` (or ``class``) is the ``class`` attribute, merged
         after the component's own ``classes``.
         """
@@ -118,7 +143,21 @@ def make_component(
             # sets the attribute.
             self[_attr_name(key)] = value
         for child in children:
-            self <= child
+            if callable(child):
+                value = child()
+                if iscoroutine(value):
+                    # The value arrives later: the side resolves the
+                    # coroutine (the client fills the element when it
+                    # resolves; the server discards it, as it has no
+                    # live DOM).
+                    if resolve_async is not None:
+                        resolve_async(self, value)
+                    else:
+                        value.close()
+                else:
+                    self <= _child_value(value)
+            else:
+                self <= _child_value(child)
 
     def el(self: Any) -> Any:
         """The component's root element: the component itself (a

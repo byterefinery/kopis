@@ -179,11 +179,16 @@ __all__ = ["install"]
 # to the block's element.
 _scope: list[DOMNode] = []
 
-# The original (unpatched) ``document.createElement`` — read before the
-# extension patches it: it makes the nodes that must not join the
-# innermost active ``with element:`` block (the ``<template>`` that
-# parses a fragment, a fresh ``<script>`` that replaces a parsed one).
+# The original (unpatched) ``document.createElement`` and
+# ``document.createTextNode`` — read before the extension patches them:
+# ``createElement`` makes the nodes that must not join the innermost
+# active ``with element:`` block (the ``<template>`` that parses a
+# fragment, a fresh ``<script>`` that replaces a parsed one), and
+# ``createTextNode`` makes the placeholder of a coroutine child (see
+# :mod:`kopis.client.component`), which is appended to its own element,
+# not to the innermost active block.
 _native_create_element = document.createElement
+_native_create_text_node = document.createTextNode
 
 
 class _StandIn:
@@ -320,18 +325,28 @@ def _runnable_script(node: DOMNode) -> DOMNode:
     return fresh
 
 
+def _fragment_nodes(html_str: str) -> list[DOMNode]:
+    """The top-level nodes of the HTML fragment ``html_str`` (parsed by
+    the browser), in order; a top-level ``<script>`` among them is
+    recreated, so that it runs when it is inserted."""
+    tpl = _native_create_element("template")
+    tpl.innerHTML = html_str
+    nodes: list[DOMNode] = []
+    for node in list(tpl.content):
+        if _is_script(node):
+            node = _runnable_script(node)
+        nodes.append(node)
+    return nodes
+
+
 def _append_fragment(self: DOMNode, html_str: str) -> DOMNode:
     """Append the top-level nodes of the HTML fragment ``html_str``
     (parsed by the browser), in order; a top-level ``<script>`` among
     them is recreated, so that it runs when it is inserted."""
-    tpl = _native_create_element("template")
-    tpl.innerHTML = html_str
     # A document node cannot take element children directly; brython's
     # own attach puts them in the body.
     target = self.body if self is document else self
-    for node in list(tpl.content):
-        if _is_script(node):
-            node = _runnable_script(node)
+    for node in _fragment_nodes(html_str):
         target.appendChild(node)
     return self
 
@@ -497,13 +512,11 @@ def install() -> None:
             _scope[-1] <= element
         return element
 
-    _orig_create_text_node = document.createTextNode
-
     def create_text_node(text: str) -> DOMNode:
         """Create a text node (the brython
         ``document.createTextNode``), appended to the innermost
         ``with element:`` block element if a block is active."""
-        node = _orig_create_text_node(str(text))
+        node = _native_create_text_node(str(text))
         if _scope:
             _scope[-1] <= node
         return node
