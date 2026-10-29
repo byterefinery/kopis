@@ -50,7 +50,7 @@ from collections.abc import Callable
 from inspect import iscoroutine
 from typing import Any
 
-from .signal import _effect_scope
+from .signal import _effect_scope, _is_awaitable
 
 __all__ = ["make_component"]
 
@@ -129,10 +129,11 @@ def make_component(
         here, as in the DOM), and a function (or a coroutine function)
         is called, with no arguments, to get the value — a value it
         returns is appended as if it were given as a child (a number,
-        for example, becomes its ``str`` form), and a coroutine it
-        returns is resolved by ``resolve_async`` (the client reserves
+        for example, becomes its ``str`` form), and an awaitable it
+        returns (a coroutine, or the result of a shared signal's
+        getter) is resolved by ``resolve_async`` (the client reserves
         the value's position with a placeholder and fills it when the
-        coroutine resolves; the server discards it, as it has no live
+        awaitable resolves; the server discards it, as it has no live
         DOM). A function child in an active effect scope
         (``with k.effect():``) is handled by ``reactive`` instead: the
         side reads the value through the scope (tracked — a signal read
@@ -171,14 +172,16 @@ def make_component(
                     reactive(self, child)
                 else:
                     value = child()
-                    if iscoroutine(value):
+                    if _is_awaitable(value):
                         # The value arrives later: the side resolves
-                        # the coroutine (the client fills the element
+                        # the awaitable (the client fills the element
                         # when it resolves; the server discards it, as
-                        # it has no live DOM).
+                        # it has no live DOM — a bare coroutine is
+                        # closed, so it is not reported as never
+                        # awaited).
                         if resolve_async is not None:
                             resolve_async(self, value)
-                        else:
+                        elif iscoroutine(value):
                             value.close()
                     else:
                         self <= _child_value(value)

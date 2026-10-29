@@ -29,8 +29,17 @@ the two sides do the same way:
   :meth:`shared_signal` (the app's way to make a
   :class:`~kopis.common.SharedSignal` — a signal whose value is shared
   between the server and the clients), and :meth:`effect` (the app's
-  way to make an :class:`~kopis.common.Effect` scope) — the reactive
+  way to make an :class:`~kopis.common.Effect` scope — sync, ``with
+  k.effect():``, or async, ``async with k.effect():``) — the reactive
   primitives of the app, the same objects the classes make directly;
+- :attr:`on_startup`, the list of the app's startup callbacks: a
+  callback is called with the application as its argument, in the
+  order it was added, when the app starts — the server runs them at
+  the web server's startup (before it starts serving), and the client,
+  when :meth:`run` is called (the unified code calls it after its own
+  appends, so all the callbacks are registered by then); a coroutine
+  callback is awaited, so a callback can do async work (an RPC call,
+  for example);
 - :meth:`register` (the canonical way ``k.rpc.register``, and the
   short way ``k.register``), and the registry of the functions
   registered with it;
@@ -71,7 +80,7 @@ from typing import Any, Self
 from .effect import Effect
 from .handle import RPCHandle, _HandleAttr
 from .magic import _event_name, _on_decorator
-from .signal import SharedSignal, Signal, _SignalGetter
+from .signal import SharedSignal, Signal, _SignalGetter, _is_awaitable
 from .uses import USES
 from .wire import RpcError
 
@@ -253,7 +262,10 @@ class KopisBase(ABC):
         dispatched — which is always the case, since brython runs the
         application code on that event — is called at once with a
         synthetic event; on the server the binding is a no-op, as
-        with everything else on the window."""
+        with everything else on the window. (The binding applies only
+        when the value is ``None`` or a callable; the ``on_startup``
+        attribute — the list of the app's startup callbacks — is a
+        real attribute, set like any other.)"""
         if (
             not name.startswith("_")
             and name.startswith("on")
@@ -276,6 +288,11 @@ class KopisBase(ABC):
         )
         self._bound: dict[str, Callable[..., Any]] = {}
         self.rpc = _Rpc(self)
+        # The callbacks to run at the app's startup, in the order they
+        # are added (the server runs them when the web server starts,
+        # and the client, when the app starts — see the class
+        # docstring).
+        self.on_startup: list[Callable[..., Any]] = []
         # The live objects this side keeps for values it could not
         # serialize, and the handles that stand in for them on the
         # other side.
@@ -395,11 +412,12 @@ class KopisBase(ABC):
         application (solidjs's ``createEffect``).
 
         The app's way to make an :class:`Effect` (the class can be used
-        directly, and works the same way): ``with k.effect():`` makes
-        the code of the block reactive — a signal read in the block
-        (a getter child of a component) is observed, and is updated in
-        place when the signal changes (see the class for the scope's
-        behaviour).
+        directly, and works the same way): ``with k.effect():`` (or
+        ``async with k.effect():`` for a block that is itself async
+        code) makes the code of the block reactive — a signal read in
+        the block (a getter child of a component) is observed, and is
+        updated in place when the signal changes (see the class for
+        the scope's behaviour).
         """
         return Effect()
 
@@ -514,7 +532,9 @@ class KopisBase(ABC):
 
     @abstractmethod
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
-        """Start the web server (server side); no-op on the client side."""
+        """Start the app: the web server on the server side (the
+        ``on_startup`` callbacks run at the server's startup), and the
+        ``on_startup`` callbacks on the client side."""
 
     # -- RPC ----------------------------------------------------------------
 
@@ -705,7 +725,7 @@ class KopisBase(ABC):
             }
         try:
             result = func(*args, **kwargs)
-            if iscoroutine(result):
+            if _is_awaitable(result):
                 result = await result
             return {"result": result}
         except Exception as exc:  # noqa: BLE001 - report any failure to the other side

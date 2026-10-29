@@ -58,17 +58,22 @@ between the server and the clients (the app's way to make one is
 each client a copy of it, and the two are synced — a change made on
 either side reaches the other, and the observers of each side's copy
 run on it. Both halves of a shared signal are awaitable (calling one
-returns a coroutine), so the unified code reads and writes the value
-the same way on both sides.
+returns an awaitable), so the unified code reads and writes the value
+the same way on both sides — and the getter's result is also an async
+iterator over the value's items, so ``async for item in get_items():``
+works alongside ``item = await get_items()``.
 """
 
 from __future__ import annotations
 
+import platform
 import sys
 from collections.abc import Callable, Iterator
 from inspect import iscoroutine
 from pickle import PicklingError
 from typing import Any, NoReturn
+
+from .handle import _brython_promise_wrap
 
 __all__ = ["SharedSignal", "Signal"]
 
@@ -81,6 +86,18 @@ def _effect_scope() -> Any:
     """The innermost active effect scope, else ``None`` (see
     :class:`~kopis.common.effect.Effect`)."""
     return _scopes[-1] if _scopes else None
+
+
+def _is_awaitable(obj: object) -> bool:
+    """Whether ``obj`` is a coroutine, or an awaitable that is not one
+    (an object with an ``__await__`` — e.g. the result of a shared
+    signal's getter, a :class:`_SharedGetResult`).
+
+    ``inspect.isawaitable`` is not used: under Brython it covers
+    coroutines and async generators only, not an object with a custom
+    ``__await__`` (and a Brython coroutine does not expose one).
+    """
+    return iscoroutine(obj) or hasattr(obj, "__await__")
 
 
 #: How far up the stack :func:`_bound_name` looks for the name the object
@@ -364,10 +381,123 @@ class Signal:
         return f"<Signal {self._cell[0]!r}>"
 
 
+#: The "not yet" sentinel of :class:`_SharedGetResult` (a fetch or a
+#: resolution not done yet).
+_UNSET = object()
+
+
+class _SharedGetResult:
+    """The result of a call of a shared signal's getter: an awaitable
+    that resolves to the signal's value, and an async iterator over
+    the value's items.
+
+    A shared getter's call returns one of these, so the unified code
+    can use the result either way::
+
+        value = await get_value()          # the whole value
+        async for item in get_items():     # the value's items
+        ...
+
+    The value is fetched once, on the first resolution (an ``await``
+    or the first item), and is shared between the two uses. Awaiting
+    it works the same way on both sides (on the server, the fetch is a
+    local read of the shared value; on the client, it is the RPC round
+    trip to the server); iterating it works the same way on both
+    sides (``__anext__`` is a plain async method, as in a standard
+    async iterator).
+    """
+
+    _fetch: Callable[[], Any]
+    _result: Any  # the fetch's result (a value, or its awaitable), once fetched
+    _value: Any  # the resolved value, once resolved
+    _items: Iterator[Any] | None  # an ``async for`` over the value's items
+
+    def __init__(self, fetch: Callable[[], Any]) -> None:
+        self._fetch = fetch
+        self._result = _UNSET
+        self._value = _UNSET
+        self._items = None
+
+    def _ensure_result(self) -> Any:
+        """The fetch's result, doing the fetch if not done yet (the
+        fetch happens at most once — it has a side effect on the
+        client, the RPC round trip of the read)."""
+        if self._result is _UNSET:
+            self._result = self._fetch()
+        return self._result
+
+    async def _resolve(self) -> Any:
+        """The value, resolving the fetch's result if not resolved yet
+        (shared between the ``await`` and the ``async for``)."""
+        if self._value is _UNSET:
+            result = self._ensure_result()
+            if _is_awaitable(result):
+                self._value = await result
+            else:
+                self._value = result
+        return self._value
+
+    def __await__(self):
+        """The value (see the class docstring for the two uses).
+
+        On the server (CPython), the ``__await__`` protocol is the
+        generator that resolves the fetch. On the client (Brython),
+        ``await`` is a native await of what ``__await__`` returns, so
+        the fetch is driven in a task that settles a future, and the
+        wrapped future (or the already-resolved value) is returned —
+        as an :class:`~kopis.common.handle.RPCHandle` does (see
+        :mod:`kopis.common.handle`).
+        """
+        if platform.python_implementation() == "Brython":
+            if self._value is not _UNSET:
+                return _brython_promise_wrap()(self._value)
+            from browser import aio
+
+            fut = aio.Future()
+
+            async def _drive() -> None:
+                try:
+                    fut.set_result(await self._resolve())
+                except Exception as exc:  # noqa: BLE001 - report it to the waiter
+                    fut.set_exception(exc)
+
+            aio.run(_drive())
+            return _brython_promise_wrap()(fut)
+        result = yield from self._resolve().__await__()
+        return result
+
+    def __aiter__(self) -> _SharedGetResult:
+        """The async iterator of an ``async for`` over the value's
+        items (the object itself)."""
+        return self
+
+    async def __anext__(self) -> Any:
+        """The next item of the value (the value is resolved on the
+        first item — the fetch happens then, if not fetched yet; a
+        non-iterable value raises ``TypeError`` out of the loop)."""
+        if self._items is None:
+            self._items = iter(await self._resolve())
+        try:
+            return next(self._items)
+        except StopIteration:
+            raise StopAsyncIteration
+
+    def __repr__(self) -> str:
+        if self._value is _UNSET:
+            return "<shared signal get result (pending)>"
+        return f"<shared signal get result {self._value!r}>"
+
+    def __reduce__(self) -> NoReturn:
+        raise PicklingError(
+            "a shared signal's get result cannot be pickled: it is an awaitable"
+        )
+
+
 class _SharedSignalGetter:
     """The getter half of a shared signal (see
-    :class:`SharedSignal`): calling it returns a coroutine that
-    resolves to the signal's value.
+    :class:`SharedSignal`): calling it returns an awaitable that
+    resolves to the signal's value (and is also an async iterator over
+    the value's items — see :class:`_SharedGetResult`).
 
     As with a plain signal's getter, a read in an active effect scope
     that is tracking a read (a getter child of a component) registers
@@ -386,26 +516,28 @@ class _SharedSignalGetter:
         object.__setattr__(self, "_shared", shared)
 
     def __call__(self) -> Any:
-        """A coroutine that resolves to the signal's value (see the
-        class docstring for where the value comes from, and what a
-        read in a tracking scope registers)."""
+        """The result of the read: an awaitable that resolves to the
+        signal's value, and an async iterator over the value's items
+        (see :class:`_SharedGetResult` for both uses; see the class
+        docstring for where the value comes from, and what a read in a
+        tracking scope registers)."""
         scope = _scopes[-1] if _scopes else None
         if scope is not None and scope._tracking is not None:
             scope.observe(self._shared._signal, scope._tracking)
         if self._shared._kopis.is_server():
             signal = self._shared._signal
 
-            async def _get() -> Any:
+            def _fetch() -> Any:
                 return signal._getter()
 
-            return _get()
+            return _SharedGetResult(_fetch)
         kopis = self._shared._kopis
         name = self._shared._getter_name
 
-        async def _get() -> Any:
-            return await kopis._rpc_call(name, (), {})
+        def _fetch() -> Any:
+            return kopis._rpc_call(name, (), {})
 
-        return _get()
+        return _SharedGetResult(_fetch)
 
     @property
     def __name__(self) -> str:
@@ -495,13 +627,18 @@ class SharedSignal:
 
         get_count, set_count = k.shared_signal(0, count_changed)
 
-    Both halves are awaitable (calling one returns a coroutine), so
-    the unified code reads and writes the value the same way on both
-    sides::
+    Both halves are awaitable, so the unified code reads and writes
+    the value the same way on both sides — the getter's call returns
+    an awaitable that resolves to the value (and is also an async
+    iterator over the value's items), and the setter's call returns a
+    coroutine::
 
         count = await get_count()
         count += 1
         await set_count(count)
+
+        async for item in get_items():  # the value's items
+            ...
 
     A getter read inside an
     :class:`~kopis.common.effect.Effect` scope that is tracking a
@@ -557,7 +694,7 @@ class SharedSignal:
         def push(value: Any) -> Any:
             async def _run() -> Any:
                 result = self._signal._setter(value)
-                if iscoroutine(result):
+                if _is_awaitable(result):
                     return await result
 
             return _run()

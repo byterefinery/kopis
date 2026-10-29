@@ -19,10 +19,11 @@ a second time.
 A child that is a function (or a coroutine function) is called, with no
 arguments, to get the value: a value it returns is appended as if it
 were given as a child (a string is parsed as a fragment, an element is
-appended, anything else becomes text), and a coroutine it returns is
-started with ``aio.run`` — an empty text node reserves the value's
-position among the element's children, and when the coroutine resolves,
-the placeholder is replaced with the value.
+appended, anything else becomes text), and an awaitable it returns (a
+coroutine, or the result of a shared signal's getter) is resolved with
+``aio.run`` — an empty text node reserves the value's position among
+the element's children, and when the awaitable resolves, the
+placeholder is replaced with the value.
 
 A child that is a function in an active effect scope
 (``with k.effect():``) is reactive, in the spirit of solidjs: the value
@@ -41,11 +42,10 @@ themselves, and the value of the newest read wins.
 """
 
 from browser import DOMNode, aio, document
-from inspect import iscoroutine
 from typing import Any
 
 from ..common.component import make_component
-from ..common.signal import _effect_scope
+from ..common.signal import _effect_scope, _is_awaitable
 from .dom import _fragment_nodes, _native_create_text_node, _scope
 
 __all__ = ["Component"]
@@ -62,29 +62,30 @@ def _enter(self: DOMNode) -> DOMNode:
     return DOMNode.__enter__(self)
 
 
-def _resolve_async(self: DOMNode, coro) -> None:
-    """Resolve a child function that returned a coroutine: the value
+def _resolve_async(self: DOMNode, value) -> None:
+    """Resolve a child function that returned an awaitable (a
+    coroutine, or the result of a shared signal's getter): the value
     arrives when it resolves (see the module docstring)."""
     placeholder = _native_create_text_node("")
     self.appendChild(placeholder)
 
     async def fill() -> None:
         try:
-            value = await coro
+            resolved = await value
         except Exception as exc:  # noqa: BLE001 - a failed child keeps the page alive
             print(f"kopis: a child function failed: {exc}")
             return
         parent = placeholder.parentNode
         if parent is None:
             return
-        if isinstance(value, str):
-            for node in _fragment_nodes(value):
+        if isinstance(resolved, str):
+            for node in _fragment_nodes(resolved):
                 parent.insertBefore(node, placeholder)
             parent.removeChild(placeholder)
-        elif hasattr(value, "appendChild"):
-            parent.replaceChild(value, placeholder)
+        elif hasattr(resolved, "appendChild"):
+            parent.replaceChild(resolved, placeholder)
         else:
-            parent.replaceChild(_native_create_text_node(str(value)), placeholder)
+            parent.replaceChild(_native_create_text_node(str(resolved)), placeholder)
 
     aio.run(fill())
 
@@ -140,7 +141,7 @@ def _reactive(self: DOMNode, child: object) -> None:
         """
         generation[0] += 1
         gen = generation[0]
-        if iscoroutine(value):
+        if _is_awaitable(value):
 
             async def resolve() -> None:
                 try:

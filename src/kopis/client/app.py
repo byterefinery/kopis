@@ -9,12 +9,18 @@ and ops in flight at the drop are re-sent on reconnect, and the server
 runs each id at most once, so a dropped connection loses no work. The
 browser's implicit event loop drives everything; ``aio.run`` starts a
 coroutine without blocking.
+
+The app's ``on_startup`` callbacks (``k.on_startup``) are run, in the
+order they were added, when ``k.run()`` is called (the app's startup
+call, which the unified code makes after its own appends, so all the
+callbacks are registered by then): each callback is called with the
+application as its argument, and a coroutine callback is awaited, so a
+callback can do async work.
 """
 
 import itertools
 import json
 import uuid
-from inspect import iscoroutine
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +37,7 @@ from ..common import (
     encode,
 )
 from ..common.handle import _HandleAttr
+from ..common.signal import _is_awaitable
 from .dom import _StandIn
 from .parser import parse_html
 
@@ -111,6 +118,7 @@ class Kopis(KopisBase):
         self._ws: Any = None
         self._open = False
         self._closed_by_user = False
+        self._started = False  # the on_startup callbacks have been run
         self._connect()
 
     @property
@@ -215,7 +223,28 @@ class Kopis(KopisBase):
         return parse_html(html_str)
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
-        """No-op on the client: the web server runs on the server side."""
+        """Start the app (client side): run the app's ``on_startup``
+        callbacks, in the order they were added (a coroutine callback
+        is awaited, so a callback can do async work) — the server
+        side's counterpart starts the web server, where the callbacks
+        run at the server's startup. The unified code calls this
+        after its own ``on_startup`` appends, so all the callbacks are
+        registered by then. The callbacks run at most once (a second
+        call is a no-op)."""
+        if self._started:
+            return
+        self._started = True
+        aio.run(self._run_on_startup())
+
+    async def _run_on_startup(self) -> None:
+        """Run the app's ``on_startup`` callbacks, in the order they
+        were added (started by :meth:`run`): each is called with the
+        application as its argument, and a coroutine callback is
+        awaited (so a callback can do async work)."""
+        for callback in list(self.on_startup):
+            result = callback(self)
+            if _is_awaitable(result):
+                await result
 
     @property
     def clients(self) -> list[Client]:
@@ -255,7 +284,7 @@ class Kopis(KopisBase):
         """
         await self._rpc_call(shared._setter_name, (value,), {})
         result = shared._signal._setter(value)
-        if iscoroutine(result):
+        if _is_awaitable(result):
             await result
 
     async def _rpc_call(
@@ -464,7 +493,7 @@ class Kopis(KopisBase):
                 msg.get("args", []),
                 msg.get("kwargs", {}),
             )
-            if iscoroutine(result):
+            if _is_awaitable(result):
                 result = await result
                 return {"result": result, "awaited": True}
             return {"result": result}
