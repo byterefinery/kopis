@@ -1,4 +1,4 @@
-from kopis import Kopis, DOMEvent, Signal
+from kopis import Kopis, DOMEvent
 from kopis.daisyui import Button
 
 
