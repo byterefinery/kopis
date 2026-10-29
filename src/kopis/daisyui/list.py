@@ -2,12 +2,12 @@
 
 from typing import ClassVar
 
-from ._component import Component
+from .daisyui_component import DaisyUIComponent
 
 __all__ = ["List", "ListCell", "ListRow"]
 
 
-class List(Component):
+class List(DaisyUIComponent):
     """A daisyUI list: ``<ul class="list">``.
 
     The children are arbitrary: ``ListRow`` items, or any element (a
@@ -18,7 +18,7 @@ class List(Component):
     classes = ("list",)
 
 
-class ListRow(Component):
+class ListRow(DaisyUIComponent):
     """An item of the ``List``: ``<li class="list-row">``.
 
     The children are the cells: arbitrary elements. The second cell
@@ -33,7 +33,7 @@ class ListRow(Component):
     classes = ("list-row",)
 
 
-class ListCell(Component):
+class ListCell(DaisyUIComponent):
     """A cell (a direct child of the ``ListRow``): a ``<div>``.
 
     ``grow`` makes the cell fill the remaining space

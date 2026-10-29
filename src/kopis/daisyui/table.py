@@ -2,12 +2,12 @@
 
 from typing import ClassVar
 
-from ._component import Component
+from .daisyui_component import DaisyUIComponent
 
 __all__ = ["Table"]
 
 
-class Table(Component):
+class Table(DaisyUIComponent):
     """A daisyUI table: ``<table class="table">``.
 
     The structure is native — ``k.html.thead``, ``k.html.tbody``,

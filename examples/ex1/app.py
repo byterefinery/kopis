@@ -20,8 +20,8 @@ async def inc_count(e: DOMEvent):
 
 with k.effect():
     with k.document.body:
-        Button(get_count, class_="btn-primary", onclick=inc_count)
-        Button(get_count, class_="btn-primary", onclick=inc_count)
+        btn0 = Button(get_count, class_="btn-primary", onclick=inc_count)
+        btn1 = Button(get_count, class_="btn-primary", onclick=inc_count)
 
 
 k.run()

@@ -2,12 +2,12 @@
 
 from typing import ClassVar
 
-from ._component import Component
+from .daisyui_component import DaisyUIComponent
 
 __all__ = ["Button"]
 
 
-class Button(Component):
+class Button(DaisyUIComponent):
     """A daisyUI button: ``<button class="btn">``.
 
     The daisyUI types are keyword arguments (one class name per

@@ -22,18 +22,15 @@ modules).
 
 from typing import Any, ClassVar
 
-from kopis import Component as _Base
+from kopis import Component
 
-__all__ = ["Component"]
+__all__ = ["DaisyUIComponent"]
+
 
 # ``kopis.Component`` is the client-side or the server-side class,
-# resolved by the ``kopis`` package at import time. The union of the
-# two is not a valid class base, so the name is widened for the
-# subclasses below.
-Base: Any = _Base
-
-
-class Component(Base):
+# resolved by the ``kopis`` package at import time. ``ty`` cannot see
+# which class it is, so it cannot check the base (nor resolve the MRO).
+class DaisyUIComponent(Component):  # ty: ignore[unsupported-base]
     """A daisyUI component: the side's ``Component`` base with the
     daisyUI types and flags of the role as keyword arguments (see the
     module docstring)."""

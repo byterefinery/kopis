@@ -53,8 +53,9 @@ so a native element with several children is built in a block. The
 DOM operators (``<=`` and friends) still work, but the constructor
 and the block are the readable ways.
 
-Each component lives in its own module named after it, and this
-package re-exports them all: :class:`Button` is
+The components all inherit from :class:`DaisyUIComponent`
+(:mod:`kopis.daisyui.daisyui_component`), and each lives in its own module
+named after it; this package re-exports them all: :class:`Button` is
 :mod:`kopis.daisyui.button`, :class:`List` and friends are
 :mod:`kopis.daisyui.list`, :class:`Table` is
 :mod:`kopis.daisyui.table`.
@@ -64,14 +65,14 @@ and ``k.use("daisyui")``) and set the theme (``data-theme`` on the
 document element).
 """
 
-from ._component import Component
+from .daisyui_component import DaisyUIComponent
 from .button import Button
 from .list import List, ListCell, ListRow
 from .table import Table
 
 __all__ = [
     "Button",
-    "Component",
+    "DaisyUIComponent",
     "List",
     "ListCell",
     "ListRow",
