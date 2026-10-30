@@ -52,11 +52,6 @@ in-flight calls and ops on reconnect, and the server runs each
 (client, id) at most once — a re-sent message is answered from the
 stored result. (A server restart re-runs calls that were in flight
 when it died.)
-
-The app's ``on_startup`` callbacks (``k.on_startup``) are run, in the
-order they were added, at the web server's startup (before the server
-starts serving), each with the application as its argument: a
-coroutine callback is awaited, so a callback can do async work.
 """
 
 import asyncio
@@ -69,6 +64,7 @@ import sys
 import threading
 import uuid
 from collections.abc import Awaitable, Callable
+from inspect import iscoroutine
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +83,6 @@ from ..common import (
     decode,
     encode,
 )
-from ..common.signal import _is_awaitable
 from . import browser
 
 __all__ = ["Kopis"]
@@ -243,11 +238,6 @@ class Kopis(KopisBase):
             self._setup_brython()
 
         self.app.on_startup.append(self._capture_main_loop)
-        # The app's on_startup callbacks run at the web server's
-        # startup, in the order they were added — after the main loop
-        # is captured, so a callback can already use k.call and the
-        # like.
-        self.app.on_startup.append(self._run_on_startup)
         self._register_document()
 
     # -- document ------------------------------------------------------------
@@ -410,16 +400,6 @@ class Kopis(KopisBase):
         """Remember the web server's event loop (at startup)."""
         self._main_loop = asyncio.get_running_loop()
 
-    async def _run_on_startup(self, app: web.Application) -> None:
-        """Run the app's ``on_startup`` callbacks, in the order they
-        were added (at the web server's startup): each is called with
-        the application as its argument, and a coroutine callback is
-        awaited (so a callback can do async work)."""
-        for callback in list(self.on_startup):
-            result = callback(self)
-            if _is_awaitable(result):
-                await result
-
     async def _serve_document(self, request: web.Request) -> web.Response:
         """Serve the document at ``/``.
 
@@ -531,7 +511,7 @@ class Kopis(KopisBase):
         pushed to every connected client.
         """
         result = shared._signal._setter(value)
-        if _is_awaitable(result):
+        if iscoroutine(result):
             await result
         origin = self._current_client.get()
         for client in self.clients:
@@ -692,7 +672,7 @@ class Kopis(KopisBase):
             }
         try:
             result = func(*args, **kwargs)
-            if _is_awaitable(result):
+            if iscoroutine(result):
                 result = asyncio.run(result)
         except Exception as exc:  # noqa: BLE001 - report any failure to the client
             return {"error": {"type": type(exc).__name__, "message": str(exc)}}
@@ -922,7 +902,7 @@ class Kopis(KopisBase):
                     msg.get("args", []),
                     msg.get("kwargs", {}),
                 )
-                awaited = _is_awaitable(result)
+                awaited = iscoroutine(result)
                 if awaited:
                     result = await result
                 payload["result"] = result

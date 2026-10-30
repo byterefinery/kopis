@@ -7,12 +7,10 @@ signals changes. This is the same primitive, in pure Python, so it runs
 unmodified on both sides of the web stack (the server, under CPython,
 and the client, under Brython).
 
-An :class:`Effect` is used as a context manager — sync
-(``with Effect():``) or async (``async with Effect():``, for a block
-that is itself async code): the code of the block runs inside the
-effect's scope, and a signal read in the scope (a getter child of a
-component — see :mod:`kopis.common.component`) registers the read as
-an observer of the signal::
+An :class:`Effect` is used as a context manager: the code of the block
+runs inside the effect's scope, and a signal read in the scope (a
+getter child of a component — see :mod:`kopis.common.component`)
+registers the read as an observer of the signal::
 
     signal = Signal(0)
     get_count, set_count = signal
@@ -49,10 +47,6 @@ class Effect:
     value and re-renders it in place. The effect keeps observing for
     the lifetime of the app, as a solidjs effect keeps observing until
     it is disposed; :meth:`dispose` stops it early.
-
-    The ``with`` is sync or async: ``with effect():`` or ``async with
-    effect():`` (an async form for a block that is itself async code)
-    — the scope's behaviour is the same either way.
     """
 
     #: This effect's observations, as ``(signal, callback)`` pairs (the
@@ -81,17 +75,6 @@ class Effect:
         if _scopes and _scopes[-1] is self:
             _scopes.pop()
         return False
-
-    async def __aenter__(self) -> Self:
-        """The async form of :meth:`__enter__`: enter the effect's
-        scope (the signal reads of the block run in it, and are
-        tracked)."""
-        return self.__enter__()
-
-    async def __aexit__(self, *exc_info: object) -> bool:
-        """The async form of :meth:`__exit__`: leave the scope (the
-        effect keeps observing; exceptions are not suppressed)."""
-        return self.__exit__(*exc_info)
 
     def track(self, child: Callable[[], Any], update: Callable[[], Any]) -> Any:
         """Call ``child`` with ``update`` as the callback of the read:

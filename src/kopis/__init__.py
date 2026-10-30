@@ -16,10 +16,9 @@ the running Python implementation:
 and to the client side in browser code. Both sides expose the same
 unified API — ``Kopis`` (with ``register``, ``rpc``, ``call``,
 ``clients``, ``document``, ``html``, ``add_static_file``,
-``parse_html``, ``run``, ``on_startup``, ``signal``,
-``shared_signal``, and ``effect``), the ``Signal`` class, the
-``SharedSignal`` class, and the ``Effect`` class, the ``Client`` proxy
-of a connected
+``parse_html``, ``run``, ``signal``, ``shared_signal``, and
+``effect``), the ``Signal`` class, the ``SharedSignal`` class, and the
+``Effect`` class, the ``Client`` proxy of a connected
 client, the ``Component`` base of the components (a component instance
 is its own root element — see ``kopis.common.component``), and the
 brython objects
@@ -27,9 +26,8 @@ brython objects
 ``DOMNode``, ``DOMEvent``, ``bind``, ``html``, ``aio``, ``ajax``,
 ``timer``, ``window``, and ``javascript`` — so a single application file
 can run unmodified on both sides; only the implementations differ
-(e.g. ``k.run()`` starts the app — the web server on the server, where
-the ``on_startup`` callbacks run at the server's startup, and the
-``on_startup`` callbacks on the client). In the browser, ``document`` is the live DOM; on the
+(e.g. ``k.run()`` starts the web server on the server and is a no-op on
+the client). In the browser, ``document`` is the live DOM; on the
 server it is a stand-in of the brython ``browser.document`` object,
 because the server has no live DOM and never parses the HTML it serves
 — the browser does that for it, in the brython way. Values exchanged
