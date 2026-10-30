@@ -33,7 +33,7 @@ async def add_new_profile():
 
 
 async def main(k: Kopis):
-    async with k.effect():
+    with k.effect():
         with k.document.body:
             with k.html.div(class_="m-8 max-w-lg space-y-8"):
                 k.html.h1("daisyUI", class_="text-2xl font-bold")
@@ -73,25 +73,6 @@ async def main(k: Kopis):
                                 k.html.th("2")
                                 k.html.td("Jeson Wilky")
                                 k.html.td("Commercial Interaction Lead")
-
-                with k.html.div(class_="overflow-x-auto"):
-                    with Table(size="sm", zebra=True):
-                        with k.html.thead():
-                            with k.html.tr():
-                                k.html.th("#")
-                                k.html.th("Name")
-                                k.html.th("DOB")
-
-                        with k.html.tbody():
-                            i = 1
-
-                            async for profile in get_profiles():
-                                with k.html.tr():
-                                    k.html.th(str(i))
-                                    k.html.td(profile['name'])
-                                    k.html.td(profile['dob'])
-
-                                i += 1
 
 
 k.on_startup.append(main)
