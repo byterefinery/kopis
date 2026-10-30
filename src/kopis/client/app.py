@@ -14,6 +14,7 @@ coroutine without blocking.
 import itertools
 import json
 import uuid
+from collections.abc import Callable
 from inspect import iscoroutine
 from pathlib import Path
 from typing import Any
@@ -216,6 +217,16 @@ class Kopis(KopisBase):
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
         """No-op on the client: the web server runs on the server side."""
+
+    def _start_startup_hook(self, func: Callable[..., Any]) -> None:
+        """Start a startup hook of the app (an element of
+        ``k.on_startup``) at once: the client's startup is the app code
+        itself (Brython runs it in the browser on load), so the hook
+        starts when it is added — a coroutine hook is started with
+        ``aio.run``."""
+        result = func(self)
+        if iscoroutine(result):
+            aio.run(result)
 
     @property
     def clients(self) -> list[Client]:

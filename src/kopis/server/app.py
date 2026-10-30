@@ -238,6 +238,7 @@ class Kopis(KopisBase):
             self._setup_brython()
 
         self.app.on_startup.append(self._capture_main_loop)
+        self.app.on_startup.append(self._run_startup_hooks)
         self._register_document()
 
     # -- document ------------------------------------------------------------
@@ -399,6 +400,15 @@ class Kopis(KopisBase):
     async def _capture_main_loop(self, app: web.Application) -> None:
         """Remember the web server's event loop (at startup)."""
         self._main_loop = asyncio.get_running_loop()
+
+    async def _run_startup_hooks(self, app: web.Application) -> None:
+        """Run the app's startup hooks (``k.on_startup``) when the web
+        server starts: each hook is called with the app, in the order
+        it was added (a coroutine hook is awaited)."""
+        for hook in self.on_startup:
+            result = hook(self)
+            if iscoroutine(result):
+                await result
 
     async def _serve_document(self, request: web.Request) -> web.Response:
         """Serve the document at ``/``.

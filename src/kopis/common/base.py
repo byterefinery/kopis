@@ -23,6 +23,14 @@ the two sides do the same way:
   its events (there is no ``onDOMContentLoaded``), so the
   ``on<event>`` names never refer to document events — a no-op on
   the server, where there is no live window;
+- the ``on_startup`` attribute — the app's list of startup hooks
+  (``k.on_startup.append(main)``): a hook is a callable called with
+  the app (a coroutine hook is awaited); on the server the hooks run
+  when the web server starts, and on the client a hook is started at
+  once when it is added (the client's startup is the app code itself,
+  which Brython runs in the browser) — unlike the ``on<event>`` names
+  (the window's handler properties), ``on_startup`` is not a window
+  event binding;
 - the ``html`` property — the ``browser.html`` builder on the client,
   a stand-in on the server;
 - :meth:`signal` (the app's way to make a :class:`~kopis.common.Signal`),
@@ -204,6 +212,29 @@ class Client:
         return f"<client {self._client_id!r}>"
 
 
+class _OnStartup(list):
+    """The app's list of startup hooks (the ``k.on_startup`` attribute).
+
+    ``append`` adds ``func`` to the list, and starts it at this side's
+    startup: the server stores it, and starts it when the web server
+    starts (the server drives its hooks, each called with the app — a
+    coroutine hook is awaited); the client starts it at once (a
+    coroutine ``func`` with ``aio.run``), since the client's startup is
+    the app code itself, which Brython runs in the browser.
+    """
+
+    _owner: KopisBase
+
+    def __init__(self, owner: KopisBase) -> None:
+        self._owner = owner
+
+    def append(self, func: Callable[..., Any]) -> None:
+        """Add the startup hook ``func`` (and start it at this side's
+        startup — see the class docstring)."""
+        list.append(self, func)
+        self._owner._start_startup_hook(func)
+
+
 class KopisBase(ABC):
     """Base class of the unified ``Kopis`` application.
 
@@ -275,6 +306,11 @@ class KopisBase(ABC):
             [] if use is None else [use] if isinstance(use, str) else list(use)
         )
         self._bound: dict[str, Callable[..., Any]] = {}
+        # The app's startup hooks (the ``k.on_startup`` attribute):
+        # the server runs them when the web server starts, and the
+        # client starts them at once when they are added (its startup
+        # is the app code itself).
+        self.on_startup: _OnStartup = _OnStartup(self)
         self.rpc = _Rpc(self)
         # The live objects this side keeps for values it could not
         # serialize, and the handles that stand in for them on the
@@ -440,6 +476,19 @@ class KopisBase(ABC):
         window is a stand-in, so the binding is a no-op.
         """
         setattr(self.window, name, value)
+
+    def _start_startup_hook(self, func: Callable[..., Any]) -> None:
+        """Start the startup hook ``func`` (an element of
+        :attr:`on_startup`) at this side's startup.
+
+        The default — the server — does nothing: the hook is stored in
+        the list, and the server starts it when the web server starts
+        (its web application's ``on_startup`` hook, each hook called
+        with the app — see
+        :meth:`~kopis.server.Kopis._run_startup_hooks`). The client
+        overrides it: its startup is the app code itself, so the hook
+        is started at once (a coroutine with ``aio.run``).
+        """
 
     def __getitem__(self, key: object) -> Any:
         """The element of the document with that id: ``k["btn0"]`` is
