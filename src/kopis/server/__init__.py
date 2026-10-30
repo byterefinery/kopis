@@ -26,9 +26,22 @@ from .app import Kopis
 from .browser import DOMEvent, DOMNode, ajax, bind, document, html, timer, window
 from .component import Component
 from .for_ import For
-from ..common import Client, Effect, RPCHandle, RpcError, SharedSignal, Signal
+from ..common import (
+    Client,
+    CONTAINER_TAGS,
+    Effect,
+    RPCHandle,
+    RpcError,
+    SharedSignal,
+    Signal,
+    TAGS,
+    VOID_TAGS,
+)
 
 __all__ = [
+    "CONTAINER_TAGS",
+    "TAGS",
+    "VOID_TAGS",
     "Client",
     "Component",
     "DOMEvent",

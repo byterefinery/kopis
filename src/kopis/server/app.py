@@ -29,7 +29,9 @@ under Brython.
 
 RPC: register a function with ``@k.rpc.register`` (the short way is
 ``@k.register``) to make it callable from the other side as
-``await k.rpc.<name>(...)`` (the short way is ``await k.<name>(...)``).
+``await k.rpc.<name>(...)`` (the short way is ``await k.<name>(...)``;
+standard HTML5 tag names and ``on<event>`` names take precedence over
+the RPC names — ``k.li(...)`` is ``k.html.li(...)``).
 Inside a registered function, ``k.rpc`` targets the client that made
 the call; calls can also be sent explicitly with ``k.call(client_id,
 ...)``. Calls and results travel both

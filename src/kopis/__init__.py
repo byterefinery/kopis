@@ -18,7 +18,8 @@ unified API — ``Kopis`` (with ``register``, ``rpc``, ``call``,
 ``clients``, ``document``, ``html``, ``add_static_file``,
 ``parse_html``, ``run``, ``signal``, ``shared_signal``, ``effect``,
 and ``for_``), the ``Signal`` class, the ``SharedSignal`` class, the
-``Effect`` class, and the ``For`` class, the ``Client`` proxy of a connected
+``Effect`` class, and the ``For`` class, the standard HTML5 tag name
+sets (``TAGS``, ``VOID_TAGS``, ``CONTAINER_TAGS``), the ``Client`` proxy of a connected
 client, the ``Component`` base of the components (a component instance
 is its own root element — see ``kopis.common.component``), and the
 brython objects
@@ -65,8 +66,11 @@ IS_SERVER: bool = platform.python_implementation() != "Brython"
 IS_CLIENT: bool = not IS_SERVER
 
 __all__ = [
+    "CONTAINER_TAGS",
     "IS_CLIENT",
     "IS_SERVER",
+    "TAGS",
+    "VOID_TAGS",
     "Client",
     "Component",
     "DOMEvent",
@@ -93,6 +97,7 @@ if IS_CLIENT:
     # built-ins are re-exported under the unified names.
     from .client import (
         Client,
+        CONTAINER_TAGS,
         Component,
         Effect,
         For,
@@ -100,6 +105,8 @@ if IS_CLIENT:
         RPCHandle,
         RpcError,
         SharedSignal,
+        TAGS,
+        VOID_TAGS,
         aio,
         ajax,
         bind,
@@ -117,6 +124,7 @@ else:
     # objects are re-exported under the same unified names.
     from .server import (
         Client,
+        CONTAINER_TAGS,
         Component,
         Effect,
         For,
@@ -124,6 +132,8 @@ else:
         RPCHandle,
         RpcError,
         SharedSignal,
+        TAGS,
+        VOID_TAGS,
         aio,
         ajax,
         bind,

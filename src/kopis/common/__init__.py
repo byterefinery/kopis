@@ -18,9 +18,12 @@ spirit of solidjs's ``createEffect``, and the ``_Item`` class
 (:mod:`~kopis.common.for_`), the ``as`` variable of a ``For`` loop (the
 loop itself is a side class — :mod:`~kopis.client.for_` and
 :mod:`~kopis.server.for_`), with the client-side dependencies for
-``k.use`` (:mod:`~kopis.common.uses`), and the ``Magic`` dummy stand-in
-(:mod:`~kopis.common.magic`), which the server uses for the brython
-``browser`` and ``javascript`` objects it has no live version of.
+``k.use`` (:mod:`~kopis.common.uses`), the standard HTML5 tag names
+grouped into the void elements (no children) and the container
+elements (with children) (:mod:`~kopis.common.tags`), and the
+``Magic`` dummy stand-in (:mod:`~kopis.common.magic`), which the
+server uses for the brython ``browser`` and ``javascript`` objects it
+has no live version of.
 """
 
 from .base import Client, KopisBase
@@ -28,11 +31,15 @@ from .effect import Effect
 from .handle import RPCHandle
 from .magic import Magic
 from .signal import SharedSignal, Signal
+from .tags import CONTAINER_TAGS, TAGS, VOID_TAGS
 from .uses import USES
 from .wire import RpcError, WS_PATH, decode, encode
 
 __all__ = [
+    "CONTAINER_TAGS",
+    "TAGS",
     "USES",
+    "VOID_TAGS",
     "WS_PATH",
     "Client",
     "Effect",

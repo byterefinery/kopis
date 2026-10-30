@@ -32,7 +32,9 @@ the two sides do the same way:
   (the window's handler properties), ``on_startup`` is not a window
   event binding;
 - the ``html`` property — the ``browser.html`` builder on the client,
-  a stand-in on the server;
+  a stand-in on the server — and the app's resolution of a standard
+  HTML5 tag name to it: ``k.li`` is ``k.html.li`` (see
+  :meth:`KopisBase.__getattr__`);
 - :meth:`signal` (the app's way to make a :class:`~kopis.common.Signal`),
   :meth:`shared_signal` (the app's way to make a
   :class:`~kopis.common.SharedSignal` — a signal whose value is shared
@@ -48,10 +50,17 @@ the two sides do the same way:
   registered with it;
 - the ``k.rpc`` proxy, which calls a function registered on the other
   side (the actual sending of the call is left to :meth:`_rpc_call`);
-  ``k.name(...)`` is the short way for ``k.rpc.name(...)`` — on the
-  client, which has the live DOM, ``k.name`` first resolves to the
-  element with that id (``k["name"]``) and is the RPC call only if no
-  element has that id — and ``k["id"]`` the short way for
+  ``k.name(...)`` is the short way for ``k.rpc.name(...)`` — except
+  that standard HTML5 tag names take precedence over the RPC names,
+  resolving to ``k.html.<tag>`` (``k.li(...)`` is
+  ``k.html.li(...)``), and ``on<event>`` names take precedence over
+  them, resolving to the window's ``on<event>`` handler property (the
+  handler, if one is set on the client; the decorator of the decorator
+  form otherwise — the no-op one on the server) — and on the client,
+  which has the live DOM, ``k.name`` first resolves to the element
+  with that id (``k["name"]``), then to the window's ``on<event>``
+  handler (if one is set), then to the HTML5 tag, and is the RPC call
+  only if none of them is there — and ``k["id"]`` the short way for
   ``k.document["id"]`` (the element with that id); an ``on<event>``
   read of such a name (``k.name.onclick``) is the no-op decorator of
   the decorator form on the server, where the name is an RPC call —
@@ -84,6 +93,7 @@ from .effect import Effect
 from .handle import RPCHandle, _HandleAttr
 from .magic import _event_name, _on_decorator
 from .signal import SharedSignal, Signal, _SignalGetter
+from .tags import TAGS
 from .uses import USES
 from .wire import RpcError
 
@@ -533,14 +543,22 @@ class KopisBase(ABC):
         return func
 
     def __getattr__(self, name: str) -> Any:
-        """The short way for ``k.rpc.name``: ``k.name(...)`` calls a
-        function registered on the other side.
+        """A standard HTML5 tag name (``k.li``) is the short way for
+        ``k.html.li``, an ``on<event>`` name (``k.onload``) is the
+        window's ``on<event>`` handler property — the no-op decorator
+        of the decorator form on this side, where there is no live
+        window — and any other name is the short way for
+        ``k.rpc.name``: ``k.name(...)`` calls a function registered on
+        the other side. HTML5 tags and ``on<event>`` names take
+        precedence over the RPC names.
 
         On the client, :class:`kopis.client.Kopis` refines this: with
         the live DOM, ``k.name`` first resolves to the element with
-        that id (``k["name"]``), and is the RPC call only if no element
-        has that id. On the server (no live DOM) every name is the RPC
-        call.
+        that id (``k["name"]``), then to the window's ``on<event>``
+        handler (if one is set), then to the HTML5 tag, and is the RPC
+        call only if none of them is there. On the server (no live
+        DOM) every name that is neither an HTML5 tag nor an
+        ``on<event>`` name is the RPC call.
 
         An ``on<event>`` read of the returned callable (e.g.
         ``k.name.onclick``) is the no-op decorator of the decorator
@@ -556,6 +574,17 @@ class KopisBase(ABC):
             # dereferencing ``self.rpc``) also breaks any recursion if
             # this is consulted before ``__init__`` has set it.
             raise AttributeError(name)
+        if name in TAGS:
+            # The HTML5 tag takes precedence over the RPC call:
+            # ``k.li(...)`` is ``k.html.li(...)``.
+            return getattr(self.html, name)
+        event = _event_name(name)
+        if event is not None:
+            # The window's ``on<event>`` handler property takes
+            # precedence over the RPC call: on this side (no live
+            # window) the decorator binds nothing and returns the
+            # decorated handler.
+            return _on_decorator(self.window, event)
         return self.rpc.__getattr__(name)
 
     @property

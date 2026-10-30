@@ -32,6 +32,7 @@ from ..common import (
     encode,
 )
 from ..common.handle import _HandleAttr
+from ..common.magic import _on_decorator
 from .dom import _StandIn
 from .for_ import For
 from .parser import parse_html
@@ -143,8 +144,11 @@ class Kopis(KopisBase):
 
     def __getattr__(self, name: str) -> Any:
         """The element of the document with that id, or — if no element
-        has that id — the window's ``on<event>`` handler property, if
-        one is set (``k.onload`` after ``k.onload = handler``), or —
+        has that id — the window's ``on<event>`` handler property:
+        the handler, if one is set (``k.onload`` after
+        ``k.onload = handler``), the decorator of the decorator form
+        otherwise — or — otherwise — the standard HTML5 tag name
+        (``k.li`` is ``k.html.li``, via the base class), or —
         otherwise — the short way for ``k.rpc.name``.
 
         ``k.btn0`` is the stand-in of the element with id ``"btn0"``
@@ -154,13 +158,18 @@ class Kopis(KopisBase):
         ``@k.btn0.onclick`` is the same as ``k.btn0.onclick = handler``
         (see :mod:`kopis.client.dom`). If no element has that id, an
         ``on<event>`` name reads back the handler of the window's
-        ``on<event>`` property, if one is set, and any other name calls
-        a function registered on the other side (the server), as in the
-        base class (where the ``on<event>`` read of the RPC call is the
-        no-op decorator). The client is the side with the live DOM, so
-        element ids take precedence over handler names and RPC names
-        (the server has no live DOM and resolves every name to the RPC
-        call, where it stays a stand-in no-op).
+        ``on<event>`` property, if one is set, and is the decorator of
+        the decorator form otherwise (``@k.onload`` binds the window's
+        ``onload`` handler for real); a standard HTML5 tag name
+        resolves to ``k.html.<tag>`` (via the base class); and any
+        other name calls a function registered on the other side (the
+        server), as in the base class (where the ``on<event>`` read of
+        the RPC call is the no-op decorator). The client is the side
+        with the live DOM, so element ids, ``on<event>`` names, and tag
+        names take precedence over the RPC names (the server has no
+        live DOM and resolves every name that is neither an HTML5 tag
+        nor an ``on<event>`` name to the RPC call, where it stays a
+        stand-in no-op).
 
         Only consulted for names that are not found the usual way, so
         the ``Kopis`` API (``register``, ``rpc``, ``document``, ...)
@@ -183,8 +192,11 @@ class Kopis(KopisBase):
                 handler = getattr(window, name)
             except AttributeError:
                 handler = None
-            if handler is not None:
+            if handler:  # unset handlers are falsy (brython's null)
                 return handler
+            # Not set: the decorator of the decorator form, which binds
+            # the window's on<event> handler property for real.
+            return _on_decorator(window, name[2:])
         return super().__getattr__(name)
 
     def _handle_getattr(self, handle: RPCHandle, name: str) -> Any:

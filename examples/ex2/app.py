@@ -26,7 +26,11 @@ async def inc_count(e: DOMEvent):
 
 
 async def add_new_profile(e: DOMEvent):
-    profile = {'name': f'John Doe {randint(0, 100)}', 'dob': 1980 + randint(0, 20)}
+    profile = {
+        'name': f'John Doe {randint(0, 100)}',
+        'dob': 1980 + randint(0, 20),
+    }
+
     profiles = await get_profiles()
     profiles.append(profile)
     await set_profiles(profiles)
@@ -37,43 +41,21 @@ async def main(k: Kopis):
         with k.document.body:
             with k.html.div(class_="m-8 max-w-lg space-y-8"):
                 k.html.h1("daisyUI", class_="text-2xl font-bold")
-
                 Button(get_count, color="primary", size="lg", onclick=inc_count)
                 Button("Add new Profile", color="primary", size="lg", onclick=add_new_profile)
 
-                List(
-                    k.html.li(
-                        "Most played songs this week",
-                        class_="p-4 pb-2 text-xs opacity-60 tracking-wide",
-                    ),
-                    ListRow(
-                        ListCell("Dio Lupa"),
-                        ListCell("Remaining Reason", grow=True),
-                        Button("▶", size="xs", style="ghost", modifier="square"),
-                    ),
-                    ListRow(
-                        ListCell("Ellie Beilish"),
-                        ListCell("Bears of a fever", grow=True),
-                        Button("▶", size="xs", style="ghost", modifier="square"),
-                    ),
-                )
+                with List():
+                    k.html.li("Most played songs this week", class_="p-4 pb-2 text-xs opacity-60 tracking-wide")
 
-                with k.html.div(class_="overflow-x-auto"):
-                    with Table(size="sm", zebra=True):
-                        with k.html.thead():
-                            with k.html.tr():
-                                k.html.th("#")
-                                k.html.th("Name")
-                                k.html.th("Job")
-                        with k.html.tbody():
-                            with k.html.tr():
-                                k.html.th("1")
-                                k.html.td("Cy Ganderton")
-                                k.html.td("Quality Control Specialist")
-                            with k.html.tr(class_="row-hover"):
-                                k.html.th("2")
-                                k.html.td("Jeson Wilky")
-                                k.html.td("Commercial Interaction Lead")
+                    with ListRow():
+                        ListCell("Dio Lupa")
+                        ListCell("Remaining Reason", grow=True)
+                        Button("▶", size="xs", style="ghost", modifier="square")
+
+                    with ListRow():
+                        ListCell("Ellie Beilish")
+                        ListCell("Bears of a fever", grow=True)
+                        Button("▶", size="xs", style="ghost", modifier="square")
 
                 with k.html.div(class_="overflow-x-auto"):
                     with Table(size="sm", zebra=True):
@@ -86,7 +68,7 @@ async def main(k: Kopis):
                         with k.html.tbody():
                             with For(get_profiles) as profile:
                                 with k.html.tr():
-                                    k.html.th(str(profile.index + 1))
+                                    k.html.th(profile.index + 1)
                                     k.html.td(profile['name'])
                                     k.html.td(profile['dob'])
 
