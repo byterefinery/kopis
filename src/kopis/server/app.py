@@ -84,6 +84,7 @@ from ..common import (
     encode,
 )
 from . import browser
+from .for_ import For
 
 __all__ = ["Kopis"]
 
@@ -1028,6 +1029,12 @@ class Kopis(KopisBase):
             # re-sends after a dropped connection gets it again.
             self._remember(self._relay_results, call_id, msg)
             self._send_to(origin[0], {**msg, "id": origin[1]})
+
+    def for_(self, list_fn: Callable[[], Any]) -> For:
+        """A server-side :class:`~kopis.server.for_.For` loop of the
+        application (a stand-in — the app's way to make one; the server
+        renders nothing, as it has no live DOM)."""
+        return For(list_fn)
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
         web.run_app(self.app, host=host, port=port)

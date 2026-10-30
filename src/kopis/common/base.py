@@ -39,6 +39,10 @@ the two sides do the same way:
   between the server and the clients), and :meth:`effect` (the app's
   way to make an :class:`~kopis.common.Effect` scope) — the reactive
   primitives of the app, the same objects the classes make directly;
+- :meth:`for_` (the app's way to make a ``For`` loop — the context
+  manager whose ``with`` block is the loop's body, re-rendered on the
+  client when the list's signal changes — see
+  :mod:`~kopis.client.for_` and :mod:`~kopis.server.for_` for the sides);
 - :meth:`register` (the canonical way ``k.rpc.register``, and the
   short way ``k.register``), and the registry of the functions
   registered with it;
@@ -438,6 +442,21 @@ class KopisBase(ABC):
         behaviour).
         """
         return Effect()
+
+    @abstractmethod
+    def for_(self, list_fn: Callable[[], Any]) -> Any:
+        """A ``For`` loop of the application (solidjs's ``For``
+        component).
+
+        The app's way to make a ``For`` (the class can be used directly,
+        and works the same way): ``with k.for_(get_profiles) as profile:``
+        makes the block of the ``with`` statement the loop's body — the
+        elements created in it are the loop's children, in the innermost
+        enclosing block — and, in an effect scope, a change of the list
+        function's signal re-renders the loop, in place (see the class
+        for the loop's behaviour: :class:`~kopis.client.for_.For` on the
+        client, :class:`~kopis.server.for_.For` on the server).
+        """
 
     def addEventListener(
         self, event: str, func: Callable[..., Any], options: Any = None

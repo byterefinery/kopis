@@ -33,6 +33,7 @@ from ..common import (
 )
 from ..common.handle import _HandleAttr
 from .dom import _StandIn
+from .for_ import For
 from .parser import parse_html
 
 __all__ = ["Kopis"]
@@ -214,6 +215,12 @@ class Kopis(KopisBase):
         ``kopis.client.dom``.)
         """
         return parse_html(html_str)
+
+    def for_(self, list_fn: Callable[[], Any]) -> For:
+        """A client-side :class:`~kopis.client.for_.For` loop of the
+        application (the app's way to make one — see the class for the
+        loop's behaviour)."""
+        return For(list_fn)
 
     def run(self, host: str = "0.0.0.0", port: int = 5000) -> None:
         """No-op on the client: the web server runs on the server side."""

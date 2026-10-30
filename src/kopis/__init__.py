@@ -16,9 +16,9 @@ the running Python implementation:
 and to the client side in browser code. Both sides expose the same
 unified API — ``Kopis`` (with ``register``, ``rpc``, ``call``,
 ``clients``, ``document``, ``html``, ``add_static_file``,
-``parse_html``, ``run``, ``signal``, ``shared_signal``, and
-``effect``), the ``Signal`` class, the ``SharedSignal`` class, and the
-``Effect`` class, the ``Client`` proxy of a connected
+``parse_html``, ``run``, ``signal``, ``shared_signal``, ``effect``,
+and ``for_``), the ``Signal`` class, the ``SharedSignal`` class, the
+``Effect`` class, and the ``For`` class, the ``Client`` proxy of a connected
 client, the ``Component`` base of the components (a component instance
 is its own root element — see ``kopis.common.component``), and the
 brython objects
@@ -72,6 +72,7 @@ __all__ = [
     "DOMEvent",
     "DOMNode",
     "Effect",
+    "For",
     "Kopis",
     "RPCHandle",
     "RpcError",
@@ -94,6 +95,7 @@ if IS_CLIENT:
         Client,
         Component,
         Effect,
+        For,
         Kopis,
         RPCHandle,
         RpcError,
@@ -117,6 +119,7 @@ else:
         Client,
         Component,
         Effect,
+        For,
         Kopis,
         RPCHandle,
         RpcError,

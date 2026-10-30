@@ -1,6 +1,6 @@
 from random import randint
 
-from kopis import Kopis, DOMEvent
+from kopis import Kopis, DOMEvent, For
 from kopis.daisyui import Button, List, ListCell, ListRow, Table
 
 
@@ -25,7 +25,7 @@ async def inc_count(e: DOMEvent):
     await set_count(count)
 
 
-async def add_new_profile():
+async def add_new_profile(e: DOMEvent):
     profile = {'name': f'John Doe {randint(0, 100)}', 'dob': 1980 + randint(0, 20)}
     profiles = await get_profiles()
     profiles.append(profile)
@@ -39,6 +39,7 @@ async def main(k: Kopis):
                 k.html.h1("daisyUI", class_="text-2xl font-bold")
 
                 Button(get_count, color="primary", size="lg", onclick=inc_count)
+                Button("Add new Profile", color="primary", size="lg", onclick=add_new_profile)
 
                 List(
                     k.html.li(
@@ -73,6 +74,21 @@ async def main(k: Kopis):
                                 k.html.th("2")
                                 k.html.td("Jeson Wilky")
                                 k.html.td("Commercial Interaction Lead")
+
+                with k.html.div(class_="overflow-x-auto"):
+                    with Table(size="sm", zebra=True):
+                        with k.html.thead():
+                            with k.html.tr():
+                                k.html.th("#")
+                                k.html.th("Name")
+                                k.html.th("DOB")
+
+                        with k.html.tbody():
+                            with For(get_profiles) as profile:
+                                with k.html.tr():
+                                    k.html.th(str(profile.index + 1))
+                                    k.html.td(profile['name'])
+                                    k.html.td(profile['dob'])
 
 
 k.on_startup.append(main)

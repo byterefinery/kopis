@@ -12,13 +12,15 @@ other side operates on it through the handle — the ``Signal`` class
 (:mod:`~kopis.common.signal`), a single value with a getter and a
 setter, in the spirit of solidjs signals, the ``SharedSignal`` class
 (a :class:`~kopis.common.signal.SharedSignal` — a signal whose value is
-shared between the server and the clients), and the ``Effect`` class
+shared between the server and the clients), the ``Effect`` class
 (:mod:`~kopis.common.effect`), a reactive scope of the signals, in the
-spirit of solidjs's ``createEffect`` — the client-side dependencies
-for ``k.use`` (:mod:`~kopis.common.uses`), and the ``Magic`` dummy
-stand-in (:mod:`~kopis.common.magic`), which the server uses for the
-brython ``browser`` and ``javascript`` objects it has no live version
-of.
+spirit of solidjs's ``createEffect``, and the ``_Item`` class
+(:mod:`~kopis.common.for_`), the ``as`` variable of a ``For`` loop (the
+loop itself is a side class — :mod:`~kopis.client.for_` and
+:mod:`~kopis.server.for_`), with the client-side dependencies for
+``k.use`` (:mod:`~kopis.common.uses`), and the ``Magic`` dummy stand-in
+(:mod:`~kopis.common.magic`), which the server uses for the brython
+``browser`` and ``javascript`` objects it has no live version of.
 """
 
 from .base import Client, KopisBase

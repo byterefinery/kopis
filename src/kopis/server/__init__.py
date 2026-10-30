@@ -25,6 +25,7 @@ from . import aio, javascript
 from .app import Kopis
 from .browser import DOMEvent, DOMNode, ajax, bind, document, html, timer, window
 from .component import Component
+from .for_ import For
 from ..common import Client, Effect, RPCHandle, RpcError, SharedSignal, Signal
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "DOMEvent",
     "DOMNode",
     "Effect",
+    "For",
     "Kopis",
     "RPCHandle",
     "RpcError",

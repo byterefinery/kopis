@@ -35,6 +35,7 @@ import javascript
 from .app import Kopis
 from .component import Component
 from .dom import install as _install_dom
+from .for_ import For
 from ..common import Client, Effect, RPCHandle, RpcError, SharedSignal, Signal
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "DOMEvent",
     "DOMNode",
     "Effect",
+    "For",
     "Kopis",
     "RPCHandle",
     "RpcError",
