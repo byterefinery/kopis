@@ -7,8 +7,8 @@ The :class:`~kopis.Component` of the client side, built by
 so it **is its own root element** — the brython element interface works
 on it directly (``<=``, ``+``, ``*``, attribute subscripts, event
 handlers, iteration, and the ``with component:`` block form), and it is
-usable everywhere an element is (``document.body <= button``, ``k.btn0``
-by id, a child of another component).
+usable everywhere an element is (``document.body <= button``,
+``k.window.btn0`` by id, a child of another component).
 
 The ``with component:`` block form appends the component to the
 innermost enclosing block when it enters it — unless it was already

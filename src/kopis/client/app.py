@@ -33,7 +33,7 @@ from ..common import (
 )
 from ..common.handle import _HandleAttr
 from ..common.magic import _on_decorator
-from .dom import _StandIn
+from .dom import _Window
 from .for_ import For
 from .parser import parse_html
 
@@ -107,10 +107,7 @@ class Kopis(KopisBase):
         self._next_id = itertools.count(1)
         self._client_id = _client_id()  # this tab's identity on the server
         self._owner_id = self._client_id  # this tab's identity in the handles it makes
-        self._elements: dict[
-            str, _StandIn
-        ] = {}  # id -> stand-in of the element with that id
-        self._window_view: _StandIn | None = None  # stand-in of the window
+        self._window_view: _Window | None = None  # stand-in of the window
         self._ws: Any = None
         self._open = False
         self._closed_by_user = False
@@ -123,16 +120,19 @@ class Kopis(KopisBase):
         return document
 
     @property
-    def window(self) -> _StandIn:
+    def window(self) -> _Window:
         """The browser window (the brython ``browser.window``
         object), as a stand-in whose ``on<event>`` read is the
-        decorator of the decorator form: ``@k.window.onload`` is the
-        same as ``k.window.onload = load`` (see :mod:`kopis.client.dom`).
-        Everything else delegates to the window itself.
+        decorator of the decorator form (``@k.window.onload`` is the
+        same as ``k.window.onload = load``), and whose ``<id>`` read is
+        the stand-in of the element with that id
+        (``k.window.btn0.onclick`` is the element's ``on<event>``
+        handler — see :mod:`kopis.client.dom`). Everything else
+        delegates to the window itself.
         """
         view = self._window_view
         if view is None:
-            view = _StandIn(window)
+            view = _Window(window)
             self._window_view = view
         return view
 
@@ -143,33 +143,21 @@ class Kopis(KopisBase):
         return html
 
     def __getattr__(self, name: str) -> Any:
-        """The element of the document with that id, or — if no element
-        has that id — the window's ``on<event>`` handler property:
+        """The window's ``on<event>`` handler property (``k.onload``):
         the handler, if one is set (``k.onload`` after
         ``k.onload = handler``), the decorator of the decorator form
         otherwise — or — otherwise — the standard HTML5 tag name
         (``k.li`` is ``k.html.li``, via the base class), or —
         otherwise — the short way for ``k.rpc.name``.
 
-        ``k.btn0`` is the stand-in of the element with id ``"btn0"``
-        (``k["btn0"]`` / ``k.document["btn0"]`` is the element itself):
-        everything delegates to the element, and an ``on<event>`` read
-        (``k.btn0.onclick``) is the decorator of the decorator form —
-        ``@k.btn0.onclick`` is the same as ``k.btn0.onclick = handler``
-        (see :mod:`kopis.client.dom`). If no element has that id, an
-        ``on<event>`` name reads back the handler of the window's
-        ``on<event>`` property, if one is set, and is the decorator of
-        the decorator form otherwise (``@k.onload`` binds the window's
-        ``onload`` handler for real); a standard HTML5 tag name
-        resolves to ``k.html.<tag>`` (via the base class); and any
-        other name calls a function registered on the other side (the
-        server), as in the base class (where the ``on<event>`` read of
-        the RPC call is the no-op decorator). The client is the side
-        with the live DOM, so element ids, ``on<event>`` names, and tag
-        names take precedence over the RPC names (the server has no
-        live DOM and resolves every name that is neither an HTML5 tag
-        nor an ``on<event>`` name to the RPC call, where it stays a
-        stand-in no-op).
+        Elements of the document are not looked up by id on the app:
+        ``k["btn0"]`` (``k.document["btn0"]``), ``k.window.btn0`` (the
+        element with id ``"btn0"``, as a stand-in of the element —
+        ``k.window.btn0.onclick`` is its ``on<event>`` handler, see
+        :mod:`kopis.client.dom`), and ``k.document.btn0`` give the
+        element with that id. Any other name calls a function
+        registered on the other side (the server), as in the base
+        class.
 
         Only consulted for names that are not found the usual way, so
         the ``Kopis`` API (``register``, ``rpc``, ``document``, ...)
@@ -177,16 +165,6 @@ class Kopis(KopisBase):
         """
         if name.startswith("_") or name == "rpc":
             raise AttributeError(name)
-        try:
-            element = self.document[name]
-        except KeyError:
-            element = None
-        if element is not None:
-            view = self._elements.get(name)
-            if view is None:
-                view = _StandIn(element)
-                self._elements[name] = view
-            return view
         if name.startswith("on") and len(name) > 2:
             try:
                 handler = getattr(window, name)

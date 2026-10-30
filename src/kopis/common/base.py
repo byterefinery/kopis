@@ -24,13 +24,14 @@ the two sides do the same way:
   ``on<event>`` names never refer to document events — a no-op on
   the server, where there is no live window;
 - the ``on_startup`` attribute — the app's list of startup hooks
-  (``k.on_startup.append(main)``): a hook is a callable called with
-  the app (a coroutine hook is awaited); on the server the hooks run
-  when the web server starts, and on the client a hook is started at
-  once when it is added (the client's startup is the app code itself,
-  which Brython runs in the browser) — unlike the ``on<event>`` names
-  (the window's handler properties), ``on_startup`` is not a window
-  event binding;
+  (``k.on_startup.append(main)``, or the decorator form
+  ``@k.on_startup`` — the two have the same effect): a hook is a
+  callable called with the app (a coroutine hook is awaited); on the
+  server the hooks run when the web server starts, and on the client a
+  hook is started at once when it is added (the client's startup is the
+  app code itself, which Brython runs in the browser) — unlike the
+  ``on<event>`` names (the window's handler properties), ``on_startup``
+  is not a window event binding;
 - the ``html`` property — the ``browser.html`` builder on the client,
   a stand-in on the server — and the app's resolution of a standard
   HTML5 tag name to it: ``k.li`` is ``k.html.li`` (see
@@ -56,17 +57,13 @@ the two sides do the same way:
   ``k.html.li(...)``), and ``on<event>`` names take precedence over
   them, resolving to the window's ``on<event>`` handler property (the
   handler, if one is set on the client; the decorator of the decorator
-  form otherwise — the no-op one on the server) — and on the client,
-  which has the live DOM, ``k.name`` first resolves to the element
-  with that id (``k["name"]``), then to the window's ``on<event>``
-  handler (if one is set), then to the HTML5 tag, and is the RPC call
-  only if none of them is there — and ``k["id"]`` the short way for
-  ``k.document["id"]`` (the element with that id); an ``on<event>``
-  read of such a name (``k.name.onclick``) is the no-op decorator of
-  the decorator form on the server, where the name is an RPC call —
-  the decorator binds nothing and returns the decorated handler; on
-  the client the element (with the real decorator) comes first, if it
-  exists;
+  form otherwise — the no-op one on the server) — and ``k["id"]`` the
+  short way for ``k.document["id"]`` (the element with that id);
+  elements are not looked up by id on the app itself — the element with
+  id ``"btn0"`` is ``k["btn0"]``, ``k.window.btn0``, or
+  ``k.document.btn0`` — and an ``on<event>`` read of an RPC name
+  (``k.name.onclick``) raises ``AttributeError`` (the handlers of an
+  element are bound on the element itself, not through the app);
 - :meth:`_dispatch`, which runs a function called by the other side
   and builds the ``result`` or ``error`` part of its payload;
 - the wiring of a :meth:`shared_signal`'s halves to the other side
@@ -111,13 +108,11 @@ class _RpcCall:
     signal re-runs the read and re-fetches the value; the value of the
     read still comes from the other side).
 
-    An ``on<event>`` read of it (``k.name.onclick``) is the no-op
-    decorator of the decorator form, so unified code that binds an
-    event handler to an element by id runs unmodified on the server,
-    where ``k.name`` is the RPC call and the decorator binds nothing
-    (and returns the decorated handler); on the client, which has the
-    live DOM, ``k.name`` is the element with that id, if there is one,
-    and the decorator there binds for real.
+    The call has no attributes of its own: an ``on<event>`` read of it
+    (``k.name.onclick``) raises ``AttributeError``, and an assignment
+    to one raises as well — the handlers of an element are bound on the
+    element itself (``k["name"].onclick``, ``k.window.name.onclick``,
+    or ``k.document.name.onclick``), not through the app.
     """
 
     _owner: KopisBase
@@ -141,12 +136,14 @@ class _RpcCall:
         return self._owner._rpc_call(self._name, args, kwargs)
 
     def __getattr__(self, name: str) -> Any:
-        if name.startswith("_"):
-            raise AttributeError(name)
-        event = _event_name(name)
-        if event is not None:
-            return _on_decorator(self, event)
         raise AttributeError(name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(
+            f"the RPC call {self._name!r} has no attribute {name!r}; "
+            f"to bind the event handler of the element with that id, "
+            f"use k.window.{self._name}.on<event>"
+        )
 
     def __repr__(self) -> str:
         return f"<RPC call {self._name!r}>"
@@ -229,7 +226,9 @@ class Client:
 class _OnStartup(list):
     """The app's list of startup hooks (the ``k.on_startup`` attribute).
 
-    ``append`` adds ``func`` to the list, and starts it at this side's
+    Adding a hook — with :meth:`append`, or with the decorator form
+    (:meth:`__call__`, ``@k.on_startup`` — the two have the same
+    effect) — adds ``func`` to the list, and starts it at this side's
     startup: the server stores it, and starts it when the web server
     starts (the server drives its hooks, each called with the app — a
     coroutine hook is awaited); the client starts it at once (a
@@ -247,6 +246,13 @@ class _OnStartup(list):
         startup — see the class docstring)."""
         list.append(self, func)
         self._owner._start_startup_hook(func)
+
+    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        """The decorator form of :meth:`append` (the two have the same
+        effect): ``@k.on_startup`` adds ``func`` as a startup hook, and
+        returns it unchanged."""
+        self.append(func)
+        return func
 
 
 class KopisBase(ABC):
@@ -302,6 +308,7 @@ class KopisBase(ABC):
         if (
             not name.startswith("_")
             and name.startswith("on")
+            and name != "on_startup"  # not a window event (the hook list)
             and len(name) > 2
             and (value is None or callable(value))
         ):
@@ -553,17 +560,12 @@ class KopisBase(ABC):
         precedence over the RPC names.
 
         On the client, :class:`kopis.client.Kopis` refines this: with
-        the live DOM, ``k.name`` first resolves to the element with
-        that id (``k["name"]``), then to the window's ``on<event>``
-        handler (if one is set), then to the HTML5 tag, and is the RPC
-        call only if none of them is there. On the server (no live
-        DOM) every name that is neither an HTML5 tag nor an
-        ``on<event>`` name is the RPC call.
-
-        An ``on<event>`` read of the returned callable (e.g.
-        ``k.name.onclick``) is the no-op decorator of the decorator
-        form on this side, where the name is an RPC call (the
-        decorator binds nothing and returns the decorated handler).
+        the live DOM, an ``on<event>`` name reads back the handler of
+        the window's ``on<event>`` property, if one is set (and is the
+        decorator of the decorator form otherwise), before the HTML5
+        tag and the RPC call. On the server (no live DOM) every name
+        that is neither an HTML5 tag nor an ``on<event>`` name is the
+        RPC call.
 
         Only consulted for names that are not found the usual way, so
         the ``Kopis`` API (``register``, ``rpc``, ``document``, ...)

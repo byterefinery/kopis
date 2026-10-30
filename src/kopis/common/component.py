@@ -11,8 +11,8 @@ class — so the brython element interface works on a component directly:
 ``component["onclick"]``), iteration over the children, and the ``with
 component:`` block form (children created in the block go into the
 component). A component is therefore usable everywhere an element is:
-``document.body <= button``, ``k.btn0`` (by id), or as a child of another
-component.
+``document.body <= button``, ``k.window.btn0`` (by id), or as a child of
+another component.
 
 The constructor takes the children and the attributes of the root
 element, in the standard (W3C/MDN) names of the DOM — ``id``, ``onclick``

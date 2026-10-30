@@ -5,8 +5,7 @@ from kopis.daisyui import Button, List, ListCell, ListRow, Table
 
 
 k = Kopis()
-k.use("tailwindcss")
-k.use("daisyui")
+k.use("tailwindcss", "daisyui")
 k.document.documentElement.setAttribute("data-theme", "dark")
 
 
@@ -36,6 +35,7 @@ async def add_new_profile(e: DOMEvent):
     await set_profiles(profiles)
 
 
+@k.on_startup
 async def main(k: Kopis):
     with k.effect():
         with k.document.body:
@@ -73,5 +73,4 @@ async def main(k: Kopis):
                                     k.td(profile['dob'])
 
 
-k.on_startup.append(main)
 k.run()

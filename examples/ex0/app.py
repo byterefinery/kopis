@@ -95,5 +95,5 @@ k.document.body.attach("""
     <button id="btn0" class="btn btn-primary">Demo</button>
 """)
 
-k.btn0.onclick = btn0_click
+k.window.btn0.onclick = btn0_click
 k.run()

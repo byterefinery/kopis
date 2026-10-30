@@ -50,26 +50,27 @@ This module extends both, once, by monkey-patching the brython
   event fires — in plain brython it would be called, return a
   coroutine that is never awaited, and never run::
 
-      k.btn0.onclick = click                    # k.btn0 is k["btn0"]
+      k.window.btn0.onclick = click             # k.window.btn0 is the
+                                                # element with id "btn0"
       k.document.btn0.onclick = click
 
   (All of the above are the same operation on the client side, which
   has the live DOM: the subscripts, the attribute, and ``bind`` /
   ``addEventListener`` all work as described; on the server they are
   stand-in no-ops, as with everything else on the document.)
-- the same, with the decorator form ``@element.on<event>``, read through
-  the app's stand-in of the element (``k.<id>``; :class:`_StandIn`):
-  the read returns a decorator, and applying it to a handler is the
-  same as the ``element.on<event> = func`` assignment above (a
-  coroutine handler is started with ``aio.run`` when the event fires),
-  and the decorated handler is returned::
+- the same, with the decorator form ``@element.on<event>``, read
+  through the app's stand-in of the element (``k.window.<id>``;
+  :class:`_StandIn`): the read returns a decorator, and applying it to
+  a handler is the same as the ``element.on<event> = func`` assignment
+  above (a coroutine handler is started with ``aio.run`` when the
+  event fires), and the decorated handler is returned::
 
-      @k.btn0.onclick
+      @k.window.btn0.onclick
       async def click(event):
-          ...                                   # same as k.btn0.onclick = click
+          ...                                   # same as k.window.btn0.onclick = click
 
-  The same, for the window, through the app's stand-in of the window
-  (``k.window``): ``@k.window.onload`` is the same as
+  The same, for the window itself, through the app's stand-in of the
+  window (``k.window``): ``@k.window.onload`` is the same as
   ``k.window.onload = load`` (a coroutine ``load`` is wrapped as above,
   and — set after the ``load`` event has already been dispatched, which
   is always the case, since brython runs the application code on the
@@ -192,17 +193,15 @@ _native_create_text_node = document.createTextNode
 
 
 class _StandIn:
-    """The app's stand-in of an element of the document (``k.<id>``) or
-    of the window (``k.window``).
+    """The app's stand-in of an element of the document
+    (``k.window.<id>``).
 
-    It delegates everything to the wrapped object, except that an
-    ``on<event>`` read (``k.btn0.onclick``, ``k.window.onload``) returns
-    the decorator of the decorator form: applying it to a handler is
-    the same as the corresponding ``on<event>`` assignment (see the
-    module docstring), and the decorated handler is returned. The
-    wrapped object itself remains available as ``k["<id>"]`` /
-    ``k.document["<id>"]`` (the element) and as ``browser.window``
-    (the window).
+    It delegates everything to the wrapped element, except that an
+    ``on<event>`` read (``k.window.btn0.onclick``) returns the decorator
+    of the decorator form: applying it to a handler is the same as the
+    corresponding ``on<event>`` assignment (see the module docstring),
+    and the decorated handler is returned. The element itself remains
+    available as ``k["<id>"]`` / ``k.document["<id>"]``.
     """
 
     _target: Any
@@ -253,6 +252,43 @@ class _StandIn:
 
     def __repr__(self) -> str:
         return repr(self._target)
+
+
+class _Window(_StandIn):
+    """The app's stand-in of the window (``k.window``).
+
+    As :class:`_StandIn`, an ``on<event>`` read (``k.window.onload``)
+    is the decorator of the decorator form. In addition, a name that is
+    the id of an element of the document resolves to the stand-in of
+    that element (``k.window.btn0``; the element itself remains
+    available as ``k["btn0"]`` / ``k.document["btn0"]``); any other
+    name delegates to the window (``k.window.location``, ...). The
+    window itself remains available as ``browser.window``.
+    """
+
+    _elements: dict[str, _StandIn]  # id -> stand-in of the element
+
+    def __init__(self, target: Any) -> None:
+        super().__init__(target)
+        object.__setattr__(self, "_elements", {})
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        event = _event_name(name)
+        if event is not None:
+            return _on_decorator(self._target, event)
+        try:
+            element = document[name]
+        except KeyError:
+            element = None
+        if element is not None:
+            view = self._elements.get(name)
+            if view is None:
+                view = _StandIn(element)
+                self._elements[name] = view
+            return view
+        return getattr(self._target, name)
 
 
 # ``DOMContentLoaded`` of the document, once dispatched, never fires

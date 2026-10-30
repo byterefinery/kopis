@@ -18,10 +18,12 @@ async def inc_count(e: DOMEvent):
     await set_count(count)
 
 
-with k.effect():
-    with k.document.body:
-        btn0 = Button(get_count, class_="btn-primary", onclick=inc_count)
-        btn1 = Button(get_count, class_="btn-primary", onclick=inc_count)
+async def main(k: Kopis):
+    with k.effect():
+        with k.document.body:
+            btn0 = Button(get_count, class_="btn-primary", onclick=inc_count)
+            btn1 = Button(get_count, class_="btn-primary", onclick=inc_count)
 
 
+k.on_startup.append(main)
 k.run()
