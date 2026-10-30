@@ -30,7 +30,7 @@ This module extends both, once, by monkey-patching the brython
           value = await k.some_server_call(...)
           k.document <= value
 
-      k.document["btn"].addEventListener("click", click)
+      k.window.btn.addEventListener("click", click)
 - an event handler can also be bound with the attribute syntax
   ``element["on<event>"] = func`` (e.g. ``element["onclick"] = func``):
   it is the same as ``element.addEventListener("<event>", func)`` (a
@@ -40,8 +40,7 @@ This module extends both, once, by monkey-patching the brython
   the handlers of ``<event>``. Any other subscript is a plain attribute
   get/set, as in brython::
 
-      k.document["btn"]["onclick"] = click      # same as addEventListener
-      k["btn"]["onclick"] = click              # k["id"] is k.document["id"]
+      k.window.btn["onclick"] = click           # same as addEventListener
 - the same, with the attribute syntax ``element.on<event> = func``
   (e.g. ``element.onclick = func``): it sets the element's native
   ``on<event>`` handler (as in brython: one handler, readable back, and
@@ -52,7 +51,6 @@ This module extends both, once, by monkey-patching the brython
 
       k.window.btn0.onclick = click             # k.window.btn0 is the
                                                 # element with id "btn0"
-      k.document.btn0.onclick = click
 
   (All of the above are the same operation on the client side, which
   has the live DOM: the subscripts, the attribute, and ``bind`` /
@@ -120,15 +118,6 @@ This module extends both, once, by monkey-patching the brython
           ...                                     # runs at once
 
       k.addEventListener("DOMContentLoaded", ready)
-- ``document.<id>`` gives the element with that id (the attribute way
-  for ``document["<id>"]``, the brython subscript): ``document.btn0``
-  is the element with id ``"btn0"``. ``document`` gets this by being
-  reclassified into a ``DOMNode`` subclass whose ``__getattr__`` falls
-  back to the subscript (the brython ``DOMNode.__getattribute__``
-  cannot be patched from Python, so the subclass is the only way in);
-  a real document property (``document.body``, ``document.title``, ...)
-  still resolves as in brython, and an id with no element raises
-  ``AttributeError``, as in brython.
 - the ``with element:`` block form: entering a ``with`` block appends
   the block's element to the innermost enclosing block element (if
   any), and while the block is active, every element or text node
@@ -191,6 +180,12 @@ _scope: list[DOMNode] = []
 _native_create_element = document.createElement
 _native_create_text_node = document.createTextNode
 
+# The original (unpatched) ``DOMNode.__getitem__`` — read before the
+# extension patches it: the window stand-in looks up the document's
+# elements by id through it (the patched subscript of the document no
+# longer does the id lookup).
+_native_getitem = DOMNode.__getitem__
+
 
 class _StandIn:
     """The app's stand-in of an element of the document
@@ -200,8 +195,7 @@ class _StandIn:
     ``on<event>`` read (``k.window.btn0.onclick``) returns the decorator
     of the decorator form: applying it to a handler is the same as the
     corresponding ``on<event>`` assignment (see the module docstring),
-    and the decorated handler is returned. The element itself remains
-    available as ``k["<id>"]`` / ``k.document["<id>"]``.
+    and the decorated handler is returned.
     """
 
     _target: Any
@@ -260,10 +254,10 @@ class _Window(_StandIn):
     As :class:`_StandIn`, an ``on<event>`` read (``k.window.onload``)
     is the decorator of the decorator form. In addition, a name that is
     the id of an element of the document resolves to the stand-in of
-    that element (``k.window.btn0``; the element itself remains
-    available as ``k["btn0"]`` / ``k.document["btn0"]``); any other
-    name delegates to the window (``k.window.location``, ...). The
-    window itself remains available as ``browser.window``.
+    that element (``k.window.btn0`` — the only lookup of the
+    document's elements by id); any other name delegates to the window
+    (``k.window.location``, ...). The window itself remains available
+    as ``browser.window``.
     """
 
     _elements: dict[str, _StandIn]  # id -> stand-in of the element
@@ -278,8 +272,11 @@ class _Window(_StandIn):
         event = _event_name(name)
         if event is not None:
             return _on_decorator(self._target, event)
+        # The original (unpatched) brython subscript: the id lookup of
+        # the document (the patched subscript of the document no longer
+        # does it).
         try:
-            element = document[name]
+            element = _native_getitem(document, name)
         except KeyError:
             element = None
         if element is not None:
@@ -395,7 +392,6 @@ def install() -> None:
     _orig_le = DOMNode.__le__
     _orig_bind = DOMNode.bind
     _orig_events = DOMNode.events
-    _orig_getitem = DOMNode.__getitem__
     _orig_setitem = DOMNode.__setitem__
     _orig_setattr = DOMNode.__setattr__
     _orig_unbind = DOMNode.unbind
@@ -473,7 +469,11 @@ def install() -> None:
             handlers = _orig_events(self, event)
             if handlers:
                 return handlers[0]
-        return _orig_getitem(self, key)
+        if self is document and isinstance(key, str):
+            # No id lookup on the document: the element with id <key>
+            # is k.window.<key> (the app's stand-in of the window).
+            raise KeyError(key)
+        return _native_getitem(self, key)
 
     def setattr(self: DOMNode, attr: str, value: object) -> None:
         """Set an attribute, as in brython — except that a coroutine
@@ -580,28 +580,6 @@ def install() -> None:
             return tag
         raise AttributeError(name)
 
-    class _Document(DOMNode):
-        """The brython ``document``, with attribute access by element
-        id: ``document.btn0`` is the element with id ``"btn0"`` (the
-        attribute way for ``document["btn0"]``).
-
-        A subclass of ``DOMNode`` whose ``__getattr__`` is consulted
-        only when the ``DOMNode.__getattribute__`` of the base raises
-        ``AttributeError`` (brython combines the two when it builds the
-        class), and that falls back to the subscript — the brython
-        id lookup. A real document property (``body``, ``title``, ...)
-        resolves before ``__getattr__`` is consulted, and an id with no
-        element keeps raising ``AttributeError``.
-        """
-
-        def __getattr__(self, name: str) -> DOMNode:
-            if name.startswith("_"):
-                raise AttributeError(name)
-            try:
-                return _orig_getitem(self, name)
-            except KeyError:
-                raise AttributeError(name)
-
     DOMNode.attach = attach
     DOMNode.__le__ = le
     DOMNode.bind = bind
@@ -617,8 +595,4 @@ def install() -> None:
     html.text = create_text_node
     html.__getattr__ = html_getattr
     _jsobj.__setattr__ = jsobj_setattr
-    # Give document the attribute-by-id access. A plain
-    # ``document.__class__ = _Document`` goes through the patched
-    # ``__setattr__`` above and is lost, so the object protocol is used.
-    object.__setattr__(document, "__class__", _Document)
     DOMNode._kopis_extended = True

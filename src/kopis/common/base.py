@@ -57,13 +57,13 @@ the two sides do the same way:
   ``k.html.li(...)``), and ``on<event>`` names take precedence over
   them, resolving to the window's ``on<event>`` handler property (the
   handler, if one is set on the client; the decorator of the decorator
-  form otherwise — the no-op one on the server) — and ``k["id"]`` the
-  short way for ``k.document["id"]`` (the element with that id);
-  elements are not looked up by id on the app itself — the element with
-  id ``"btn0"`` is ``k["btn0"]``, ``k.window.btn0``, or
-  ``k.document.btn0`` — and an ``on<event>`` read of an RPC name
-  (``k.name.onclick``) raises ``AttributeError`` (the handlers of an
-  element are bound on the element itself, not through the app);
+  form otherwise — the no-op one on the server); elements are not
+  looked up by id on the app or on the document — the element with id
+  ``"btn0"`` is ``k.window.btn0`` (the app's stand-in of the element —
+  the only lookup of the document's elements by id) — and an
+  ``on<event>`` read of an RPC name (``k.name.onclick``) raises
+  ``AttributeError`` (the handlers of an element are bound on the
+  element itself, not through the app);
 - :meth:`_dispatch`, which runs a function called by the other side
   and builds the ``result`` or ``error`` part of its payload;
 - the wiring of a :meth:`shared_signal`'s halves to the other side
@@ -111,8 +111,7 @@ class _RpcCall:
     The call has no attributes of its own: an ``on<event>`` read of it
     (``k.name.onclick``) raises ``AttributeError``, and an assignment
     to one raises as well — the handlers of an element are bound on the
-    element itself (``k["name"].onclick``, ``k.window.name.onclick``,
-    or ``k.document.name.onclick``), not through the app.
+    element itself (``k.window.name.onclick``), not through the app.
     """
 
     _owner: KopisBase
@@ -525,17 +524,6 @@ class KopisBase(ABC):
         overrides it: its startup is the app code itself, so the hook
         is started at once (a coroutine with ``aio.run``).
         """
-
-    def __getitem__(self, key: object) -> Any:
-        """The element of the document with that id: ``k["btn0"]`` is
-        the same as ``k.document["btn0"]``.
-
-        On the client (the live DOM) it is the element itself, and
-        ``KeyError`` is raised if no element has that id, as in brython;
-        on the server (no live DOM) it is a stand-in element, as with
-        everything else on the document.
-        """
-        return self.document[key]
 
     def register(self, func: Callable[..., Any]) -> Callable[..., Any]:
         """Register a function so that the other side can call it via

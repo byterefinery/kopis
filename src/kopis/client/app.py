@@ -150,12 +150,11 @@ class Kopis(KopisBase):
         (``k.li`` is ``k.html.li``, via the base class), or —
         otherwise — the short way for ``k.rpc.name``.
 
-        Elements of the document are not looked up by id on the app:
-        ``k["btn0"]`` (``k.document["btn0"]``), ``k.window.btn0`` (the
-        element with id ``"btn0"``, as a stand-in of the element —
+        Elements of the document are not looked up by id on the app or
+        on the document: the element with id ``"btn0"`` is
+        ``k.window.btn0`` (a stand-in of the element —
         ``k.window.btn0.onclick`` is its ``on<event>`` handler, see
-        :mod:`kopis.client.dom`), and ``k.document.btn0`` give the
-        element with that id. Any other name calls a function
+        :mod:`kopis.client.dom`). Any other name calls a function
         registered on the other side (the server), as in the base
         class.
 
