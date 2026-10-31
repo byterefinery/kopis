@@ -31,7 +31,7 @@ The ``as`` variable is the loop's item: ``item.index`` is the item's
 index (0-based, as in solidjs) and ``item.item`` is the item itself;
 any other access is passed through to the item — ``item['name']`` is
 ``item['name']`` of the item, ``item.name`` is ``item.name`` of the
-item, and so on (see :class:`_Item`).
+item, and so on (see :class:`Item`).
 
 The block runs once at the entry of the ``with`` statement (a *template
 pass* — the elements it creates are detached, and never appear in the
@@ -42,14 +42,12 @@ server has no live DOM, so it renders nothing — see
 :mod:`kopis.server.for_`).
 """
 
-from __future__ import annotations
-
 from typing import Any
 
-__all__ = ["_Item"]
+__all__ = ["Item"]
 
 
-class _Item:
+class Item:
     """The ``as`` variable of a :class:`For` block: the current item,
     with its index attached (solidjs attaches an ``index`` property to
     the item).
@@ -67,8 +65,8 @@ class _Item:
     _item: Any
 
     def __init__(self, index: int, item: Any) -> None:
-        object.__setattr__(self, "_index", index)
-        object.__setattr__(self, "_item", item)
+        self._index = index
+        self._item = item
 
     @property
     def index(self) -> int:

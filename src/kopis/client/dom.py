@@ -56,7 +56,7 @@ This module extends both, once, by monkey-patching the brython
   stand-in no-ops, as with everything else on the document.)
 - the same, with the decorator form ``@element.on<event>``, read
   through the app's stand-in of the element (``k.window.<id>``;
-  :class:`_StandIn`): the read returns a decorator, and applying it to
+  :class:`StandIn`): the read returns a decorator, and applying it to
   a handler is the same as the ``element.on<event> = func`` assignment
   above (a coroutine handler is started with ``aio.run`` when the
   event fires), and the decorated handler is returned::
@@ -187,7 +187,7 @@ _native_create_text_node = document.createTextNode
 _native_getitem = Node.__getitem__
 
 
-class _StandIn:
+class StandIn:
     """The app's stand-in of an element of the document
     (``k.window.<id>``).
 
@@ -201,6 +201,8 @@ class _StandIn:
     _target: Any
 
     def __init__(self, target: Any) -> None:
+        # via object.__setattr__: the __setattr__ below delegates to the
+        # wrapped element
         object.__setattr__(self, "_target", target)
 
     def __getattr__(self, name: str) -> Any:
@@ -245,10 +247,10 @@ class _StandIn:
         return repr(self._target)
 
 
-class _Window(_StandIn):
+class Window(StandIn):
     """The app's stand-in of the window (``k.window``).
 
-    As :class:`_StandIn`, an ``on<event>`` read (``k.window.onload``)
+    As :class:`StandIn`, an ``on<event>`` read (``k.window.onload``)
     is the decorator of the decorator form. In addition, a name that is
     the id of an element of the document resolves to the stand-in of
     that element (``k.window.btn0`` — the only lookup of the
@@ -257,10 +259,11 @@ class _Window(_StandIn):
     as ``browser.window``.
     """
 
-    _elements: dict[str, _StandIn]  # id -> stand-in of the element
+    _elements: dict[str, StandIn]  # id -> stand-in of the element
 
     def __init__(self, target: Any) -> None:
         super().__init__(target)
+        # via object.__setattr__: the __setattr__ delegates to the window
         object.__setattr__(self, "_elements", {})
 
     def __getattr__(self, name: str) -> Any:
@@ -279,7 +282,7 @@ class _Window(_StandIn):
         if element is not None:
             view = self._elements.get(name)
             if view is None:
-                view = _StandIn(element)
+                view = StandIn(element)
                 self._elements[name] = view
             return view
         return getattr(self._target, name)

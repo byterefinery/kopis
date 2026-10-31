@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 
-class _JSType:
+class JSType:
     """Base of the brython Javascript special values."""
 
     def __bool__(self) -> bool:
@@ -49,7 +49,7 @@ class _JSType:
         return 0
 
 
-class NullType(_JSType):
+class NullType(JSType):
     """The brython ``javascript.NULL`` value (Javascript ``null``)."""
 
     def __str__(self) -> str:
@@ -59,7 +59,7 @@ class NullType(_JSType):
         return "<Javascript null>"
 
 
-class UndefinedType(_JSType):
+class UndefinedType(JSType):
     """The brython ``javascript.UNDEFINED`` value (Javascript
     ``undefined``)."""
 

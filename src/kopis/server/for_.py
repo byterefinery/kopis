@@ -8,13 +8,11 @@ document), and the list is not fetched (the client fetches it, and
 renders the loop).
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from inspect import iscoroutine
 from typing import Any
 
-from ..common.for_ import _Item
+from ..common.for_ import Item
 
 __all__ = ["For"]
 
@@ -25,19 +23,19 @@ class For:
     block runs once at the entry of the ``with`` statement, and the
     list is not fetched)."""
 
-    _list_fn: Callable[[], Any]
+    list_fn: Callable[[], Any]
 
     def __init__(self, list_fn: Callable[[], Any]) -> None:
-        object.__setattr__(self, "_list_fn", list_fn)
+        self.list_fn = list_fn
 
-    def __enter__(self) -> _Item:
+    def __enter__(self) -> Item:
         """Enter the loop: read the list function (a coroutine result is
         discarded — the list is not fetched, as the server renders
         nothing), and hand out the template pass's item."""
-        value = self._list_fn()
+        value = self.list_fn()
         if iscoroutine(value):
             value.close()
-        return _Item(0, None)
+        return Item(0, None)
 
     def __exit__(self, *exc_info: object) -> bool:
         return False

@@ -62,8 +62,6 @@ returns a coroutine), so the unified code reads and writes the value
 the same way on both sides.
 """
 
-from __future__ import annotations
-
 import sys
 from collections.abc import Callable, Iterator
 from inspect import iscoroutine
@@ -89,7 +87,7 @@ def _effect_scope() -> Any:
 _MAX_FRAMES = 64
 
 
-class _SignalGetter:
+class SignalGetter:
     """The getter half of a signal: calling it returns the signal's
     value.
 
@@ -101,14 +99,14 @@ class _SignalGetter:
     explicit handle if it should travel).
     """
 
-    _cell: list[Any]
-    _fallback_name: str
-    _signal: Signal
+    cell: list[Any]
+    fallback_name: str
+    signal: Signal
 
     def __init__(self, cell: list[Any], fallback_name: str, signal: Signal) -> None:
-        object.__setattr__(self, "_cell", cell)
-        object.__setattr__(self, "_fallback_name", fallback_name)
-        object.__setattr__(self, "_signal", signal)
+        self.cell = cell
+        self.fallback_name = fallback_name
+        self.signal = signal
 
     def __call__(self) -> Any:
         """The signal's current value.
@@ -120,18 +118,18 @@ class _SignalGetter:
         re-runs the callback (which re-reads and re-renders the value).
         """
         scope = _scopes[-1] if _scopes else None
-        if scope is not None and scope._tracking is not None:
-            scope.observe(self._signal, scope._tracking)
-        return self._cell[0]
+        if scope is not None and scope.tracking is not None:
+            scope.observe(self.signal, scope.tracking)
+        return self.cell[0]
 
     @property
     def __name__(self) -> str:
         """The name this getter is bound to in the calling scope (see
         :func:`_bound_name`)."""
-        return _bound_name(self, self._fallback_name)
+        return _bound_name(self, self.fallback_name)
 
     def __repr__(self) -> str:
-        return f"<signal getter {self._fallback_name!r}>"
+        return f"<signal getter {self.fallback_name!r}>"
 
     def __reduce__(self) -> NoReturn:
         raise PicklingError(
@@ -139,7 +137,7 @@ class _SignalGetter:
         )
 
 
-class _SignalSetter:
+class SignalSetter:
     """The setter half of a signal: calling it with a value updates the
     signal.
 
@@ -147,10 +145,10 @@ class _SignalSetter:
     it to in their code, and it does not travel (pickling it raises).
     """
 
-    _cell: list[Any]
-    _fallback_name: str
-    _signal: Signal
-    _on_change: Callable[[Signal, Any], Any] | None
+    cell: list[Any]
+    fallback_name: str
+    signal: Signal
+    on_change: Callable[[Signal, Any], Any] | None
 
     def __init__(
         self,
@@ -159,10 +157,10 @@ class _SignalSetter:
         signal: Signal,
         on_change: Callable[[Signal, Any], Any] | None = None,
     ) -> None:
-        object.__setattr__(self, "_cell", cell)
-        object.__setattr__(self, "_fallback_name", fallback_name)
-        object.__setattr__(self, "_signal", signal)
-        object.__setattr__(self, "_on_change", on_change)
+        self.cell = cell
+        self.fallback_name = fallback_name
+        self.signal = signal
+        self.on_change = on_change
 
     def __call__(self, value: Any) -> Any:
         """Update the signal's value to ``value``, and notify the
@@ -180,28 +178,28 @@ class _SignalSetter:
         its coroutine, so the caller drives it with
         ``await set_count(value)``.
         """
-        current = self._cell[0]
-        self._cell[0] = value
+        current = self.cell[0]
+        self.cell[0] = value
         try:
             changed = value != current
         except Exception:  # noqa: BLE001 - a broken == still updates the value
             changed = value is not current
         if changed:
-            for observer in list(self._signal._observers):
+            for observer in list(self.signal.observers):
                 observer()
-        on_change = self._on_change
+        on_change = self.on_change
         if on_change is not None:
-            return on_change(self._signal, value)
+            return on_change(self.signal, value)
         return None
 
     @property
     def __name__(self) -> str:
         """The name this setter is bound to in the calling scope (see
         :func:`_bound_name`)."""
-        return _bound_name(self, self._fallback_name)
+        return _bound_name(self, self.fallback_name)
 
     def __repr__(self) -> str:
-        return f"<signal setter {self._fallback_name!r}>"
+        return f"<signal setter {self.fallback_name!r}>"
 
     def __reduce__(self) -> NoReturn:
         raise PicklingError(
@@ -311,10 +309,10 @@ class Signal:
     and its value re-rendered in place.
     """
 
-    _cell: list[Any]
-    _getter: _SignalGetter
-    _setter: _SignalSetter
-    _observers: list[Callable[[], Any]]
+    cell: list[Any]
+    getter: SignalGetter
+    setter: SignalSetter
+    observers: list[Callable[[], Any]]
 
     def __init__(
         self,
@@ -322,27 +320,23 @@ class Signal:
         on_change: Callable[[Signal, Any], Any] | None = None,
     ) -> None:
         cell: list[Any] = [value]
-        object.__setattr__(self, "_cell", cell)
-        object.__setattr__(self, "_observers", [])
-        object.__setattr__(self, "_getter", _SignalGetter(cell, "get", self))
-        object.__setattr__(
-            self,
-            "_setter",
-            _SignalSetter(cell, "set", self, on_change),
-        )
+        self.cell = cell
+        self.observers = []
+        self.getter = SignalGetter(cell, "get", self)
+        self.setter = SignalSetter(cell, "set", self, on_change)
 
     def _observe(self, callback: Callable[[], Any]) -> None:
         """Register ``callback`` as an observer of the change (a no-op
         if it is already registered): an update of the value runs the
         observers (see the class docstring)."""
-        if callback not in self._observers:
-            self._observers.append(callback)
+        if callback not in self.observers:
+            self.observers.append(callback)
 
     def _forget(self, callback: Callable[[], Any]) -> None:
         """Remove the observer ``callback`` (a no-op if it is not
         registered)."""
         try:
-            self._observers.remove(callback)
+            self.observers.remove(callback)
         except ValueError:
             pass
 
@@ -352,19 +346,19 @@ class Signal:
 
             get_count, set_count = signal
 
-        ``get_count`` is a :class:`_SignalGetter` (call it for the value)
-        and ``set_count`` a :class:`_SignalSetter` (call it with a value);
+        ``get_count`` is a :class:`SignalGetter` (call it for the value)
+        and ``set_count`` a :class:`SignalSetter` (call it with a value);
         the element type is left as ``Any`` because the two halves are
         different callables).
         """
-        yield self._getter
-        yield self._setter
+        yield self.getter
+        yield self.setter
 
     def __repr__(self) -> str:
-        return f"<Signal {self._cell[0]!r}>"
+        return f"<Signal {self.cell[0]!r}>"
 
 
-class _SharedSignalGetter:
+class SharedSignalGetter:
     """The getter half of a shared signal (see
     :class:`SharedSignal`): calling it returns a coroutine that
     resolves to the signal's value.
@@ -380,27 +374,27 @@ class _SharedSignalGetter:
     unmodified.
     """
 
-    _shared: SharedSignal
+    shared: SharedSignal
 
     def __init__(self, shared: SharedSignal) -> None:
-        object.__setattr__(self, "_shared", shared)
+        self.shared = shared
 
     def __call__(self) -> Any:
         """A coroutine that resolves to the signal's value (see the
         class docstring for where the value comes from, and what a
         read in a tracking scope registers)."""
         scope = _scopes[-1] if _scopes else None
-        if scope is not None and scope._tracking is not None:
-            scope.observe(self._shared._signal, scope._tracking)
-        if self._shared._kopis.is_server():
-            signal = self._shared._signal
+        if scope is not None and scope.tracking is not None:
+            scope.observe(self.shared.signal, scope.tracking)
+        if self.shared.kopis.is_server():
+            signal = self.shared.signal
 
             async def _get() -> Any:
-                return signal._getter()
+                return signal.getter()
 
             return _get()
-        kopis = self._shared._kopis
-        name = self._shared._getter_name
+        kopis = self.shared.kopis
+        name = self.shared.getter_name
 
         async def _get() -> Any:
             return await kopis._rpc_call(name, (), {})
@@ -414,7 +408,7 @@ class _SharedSignalGetter:
         return _bound_name(self, "get")
 
     def __repr__(self) -> str:
-        return f"<shared signal getter {self._shared._getter_name!r}>"
+        return f"<shared signal getter {self.shared.getter_name!r}>"
 
     def __reduce__(self) -> NoReturn:
         raise PicklingError(
@@ -422,7 +416,7 @@ class _SharedSignalGetter:
         )
 
 
-class _SharedSignalSetter:
+class SharedSignalSetter:
     """The setter half of a shared signal (see
     :class:`SharedSignal`): calling it with a value returns a
     coroutine that updates the signal.
@@ -442,18 +436,18 @@ class _SharedSignalSetter:
     unmodified.
     """
 
-    _shared: SharedSignal
+    shared: SharedSignal
 
     def __init__(self, shared: SharedSignal) -> None:
-        object.__setattr__(self, "_shared", shared)
+        self.shared = shared
 
     def __call__(self, value: Any) -> Any:
         """A coroutine that updates the signal to ``value`` and syncs
         the change to the other side (see the class docstring)."""
-        shared = self._shared
+        shared = self.shared
 
         async def _set() -> Any:
-            await shared._kopis._sync_shared_signal(shared, value)
+            await shared.kopis._sync_shared_signal(shared, value)
 
         return _set()
 
@@ -464,7 +458,7 @@ class _SharedSignalSetter:
         return _bound_name(self, "set")
 
     def __repr__(self) -> str:
-        return f"<shared signal setter {self._shared._setter_name!r}>"
+        return f"<shared signal setter {self.shared.setter_name!r}>"
 
     def __reduce__(self) -> NoReturn:
         raise PicklingError(
@@ -522,13 +516,13 @@ class SharedSignal:
     ``k.register`` like any other function.
     """
 
-    _kopis: Any
-    _signal: Signal
-    _index: int
-    _getter_name: str
-    _setter_name: str
-    _getter: _SharedSignalGetter
-    _setter: _SharedSignalSetter
+    kopis: Any
+    signal: Signal
+    index: int
+    getter_name: str
+    setter_name: str
+    getter: SharedSignalGetter
+    setter: SharedSignalSetter
 
     def __init__(
         self,
@@ -536,16 +530,16 @@ class SharedSignal:
         value: Any,
         on_change: Callable[[Signal, Any], Any] | None = None,
     ) -> None:
-        self._index = kopis._next_shared_signal
-        kopis._next_shared_signal += 1
-        self._getter_name = f"__kopis_shared_get_{self._index}"
-        self._setter_name = f"__kopis_shared_set_{self._index}"
-        self._kopis = kopis
+        self.index = kopis.next_shared_signal
+        kopis.next_shared_signal += 1
+        self.getter_name = f"__kopis_shared_get_{self.index}"
+        self.setter_name = f"__kopis_shared_set_{self.index}"
+        self.kopis = kopis
         # This side's copy of the value: the shared one on the server,
         # a per-client copy on the client.
-        self._signal = Signal(value, on_change)
-        self._getter = _SharedSignalGetter(self)
-        self._setter = _SharedSignalSetter(self)
+        self.signal = Signal(value, on_change)
+        self.getter = SharedSignalGetter(self)
+        self.setter = SharedSignalSetter(self)
 
     def _push_handler(self) -> Callable[..., Any]:
         """The function this client registers so the server can push a
@@ -556,7 +550,7 @@ class SharedSignal:
 
         def push(value: Any) -> Any:
             async def _run() -> Any:
-                result = self._signal._setter(value)
+                result = self.signal.setter(value)
                 if iscoroutine(result):
                     return await result
 
@@ -570,14 +564,14 @@ class SharedSignal:
 
             get_count, set_count = k.shared_signal(0)
 
-        ``get_count`` is a :class:`_SharedSignalGetter` (call it and
+        ``get_count`` is a :class:`SharedSignalGetter` (call it and
         await it for the value) and ``set_count`` a
-        :class:`_SharedSignalSetter` (call it with a value and await
+        :class:`SharedSignalSetter` (call it with a value and await
         it); the element type is left as ``Any`` because the two
         halves are different callables).
         """
-        yield self._getter
-        yield self._setter
+        yield self.getter
+        yield self.setter
 
     def __repr__(self) -> str:
-        return f"<SharedSignal {self._signal._cell[0]!r}>"
+        return f"<SharedSignal {self.signal.cell[0]!r}>"

@@ -13,7 +13,7 @@ the block is in), the function's source is read from the line cache,
 and the block's statements — the lines of the function's source that
 follow the ``with`` header, indented under it — are compiled to a code
 object. Each re-execution binds the loop's ``as`` variable (a
-:class:`~kopis.common.for_._Item` of the item and its index) and the
+:class:`~kopis.common.for_.Item` of the item and its index) and the
 frame's own locals (the names the block reads, like ``k``), and the
 elements created in it join the innermost enclosing block (the one
 active at the entry of the ``with`` statement) — or the document's body,
@@ -42,7 +42,7 @@ from typing import Any
 
 from browser import aio, document
 
-from ..common.for_ import _Item
+from ..common.for_ import Item
 from ..common.signal import _effect_scope
 from .dom import _native_create_element, _scope
 
@@ -147,30 +147,30 @@ class For:
     of the signal it reads re-reads the list, and re-renders the loop's
     children in place (the block is re-executed once per item)."""
 
-    _list_fn: Callable[[], Any]
-    _scope: Any | None
-    _parent: Any
-    _dummy: Any
-    _body: Any
-    _as_name: str | None
-    _globals: Any
-    _locals: dict[str, Any]
-    _nodes: list[Any]
-    _generation: int
+    list_fn: Callable[[], Any]
+    scope: Any | None
+    parent: Any
+    dummy: Any
+    body: Any
+    as_name: str | None
+    globals: Any
+    locals: dict[str, Any]
+    nodes: list[Any]
+    generation: int
 
     def __init__(self, list_fn: Callable[[], Any]) -> None:
-        object.__setattr__(self, "_list_fn", list_fn)
-        object.__setattr__(self, "_scope", None)
-        object.__setattr__(self, "_parent", None)
-        object.__setattr__(self, "_dummy", None)
-        object.__setattr__(self, "_body", None)
-        object.__setattr__(self, "_as_name", None)
-        object.__setattr__(self, "_globals", None)
-        object.__setattr__(self, "_locals", {})
-        object.__setattr__(self, "_nodes", [])
-        object.__setattr__(self, "_generation", 0)
+        self.list_fn = list_fn
+        self.scope = None
+        self.parent = None
+        self.dummy = None
+        self.body = None
+        self.as_name = None
+        self.globals = None
+        self.locals = {}
+        self.nodes = []
+        self.generation = 0
 
-    def __enter__(self) -> _Item:
+    def __enter__(self) -> Item:
         """Enter the loop: capture the block's source (and the frame it
         runs in), read the list (tracked, in an active effect scope),
         and hand out the template pass's item (a forgiving item of
@@ -180,26 +180,26 @@ class For:
         self._capture(frame)
         # The elements of the re-executions join the innermost enclosing
         # block (or the document's body, if there is none).
-        self._parent = _scope[-1] if _scope else None
+        self.parent = _scope[-1] if _scope else None
         # The template pass's elements are detached: they join this
         # dummy element, which is never attached to the document.
-        self._dummy = _native_create_element("div")
-        _scope.append(self._dummy)
+        self.dummy = _native_create_element("div")
+        _scope.append(self.dummy)
         scope = _effect_scope()
-        self._scope = scope
+        self.scope = scope
         value = (
-            scope.track(self._list_fn, self._update)
+            scope.track(self.list_fn, self._update)
             if scope is not None
-            else self._list_fn()
+            else self.list_fn()
         )
         self._resolve(value)
-        return _Item(0, None)
+        return Item(0, None)
 
     def __exit__(self, *exc_info: object) -> bool:
         """Leave the block. The template pass's dummy element is no
         longer the innermost block element. Exceptions are not
         suppressed."""
-        if _scope and _scope[-1] is self._dummy:
+        if _scope and _scope[-1] is self.dummy:
             _scope.pop()
         return False
 
@@ -232,10 +232,10 @@ class For:
                 )
             with_line = found
         source, as_name = _with_body(lines, with_line)
-        self._body = compile(source, code.co_filename, "exec")
-        self._as_name = as_name
-        self._globals = frame.f_globals
-        self._locals = self._snapshot(frame)
+        self.body = compile(source, code.co_filename, "exec")
+        self.as_name = as_name
+        self.globals = frame.f_globals
+        self.locals = self._snapshot(frame)
 
     @staticmethod
     def _snapshot(frame: Any) -> dict[str, Any]:
@@ -250,11 +250,11 @@ class For:
         """The observer of a change of the list's signal: the list is
         re-read (re-tracked, as a solidjs effect re-tracks on every
         re-run), and the loop is re-rendered with the new list."""
-        scope = self._scope
+        scope = self.scope
         value = (
-            scope.track(self._list_fn, self._update)
+            scope.track(self.list_fn, self._update)
             if scope is not None
-            else self._list_fn()
+            else self.list_fn()
         )
         self._resolve(value)
 
@@ -264,8 +264,8 @@ class For:
         supersedes the previous one: a pending resolution of a
         superseded read is dropped, so the list of the newest read wins
         (the reads' resolutions are not ordered among themselves)."""
-        self._generation += 1
-        generation = self._generation
+        self.generation += 1
+        generation = self.generation
         if iscoroutine(value):
 
             async def fill() -> None:
@@ -274,7 +274,7 @@ class For:
                 except Exception as exc:  # noqa: BLE001 - a failed read keeps the loop alive
                     print(f"kopis: a For list read failed: {exc}")
                     return
-                if generation != self._generation:
+                if generation != self.generation:
                     # Superseded by a newer read: the newer list wins.
                     return
                 try:
@@ -291,23 +291,23 @@ class For:
         children: the old children are removed, and the block is
         re-executed once per item (its elements join the parent, in the
         brython way)."""
-        parent = self._parent if self._parent is not None else document.body
-        for node in self._nodes:
+        parent = self.parent if self.parent is not None else document.body
+        for node in self.nodes:
             if node.parentNode is parent:
                 parent.removeChild(node)
-        self._nodes = []
+        self.nodes = []
         before = len(list(parent.childNodes))
         _scope.append(parent)
         try:
             for index, item in enumerate(items):
-                locals = dict(self._locals)
-                if self._as_name is not None:
-                    locals[self._as_name] = _Item(index, item)
-                exec(self._body, self._globals, locals)  # noqa: S102
+                locals = dict(self.locals)
+                if self.as_name is not None:
+                    locals[self.as_name] = Item(index, item)
+                exec(self.body, self.globals, locals)  # noqa: S102
         finally:
             if _scope and _scope[-1] is parent:
                 _scope.pop()
-        self._nodes = list(parent.childNodes)[before:]
+        self.nodes = list(parent.childNodes)[before:]
 
     def __repr__(self) -> str:
-        return f"<For {len(self._nodes)} child(ren)>"
+        return f"<For {len(self.nodes)} child(ren)>"

@@ -13,8 +13,6 @@ for making elements on both sides.
   ``CONTAINER_TAGS | VOID_TAGS``.
 """
 
-from __future__ import annotations
-
 __all__ = ["CONTAINER_TAGS", "TAGS", "VOID_TAGS"]
 
 #: The standard HTML5 void elements: they cannot have children.

@@ -44,8 +44,6 @@ and the classes it always has (a component library like
 ``class_`` are merged with them.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from inspect import iscoroutine
 from typing import Any
@@ -138,7 +136,7 @@ def make_component(
         side reads the value through the scope (tracked — a signal read
         in the read registers the read as an observer of the signal, as
         does a call of a registered signal getter in it, see
-        :class:`~kopis.common.base._RpcCall`), and updates the value in
+        :class:`~kopis.common.base.RpcCall`), and updates the value in
         place when the signal it read changes (the client does; the
         server has no ``reactive``, and calls the function as usual).
         ``attrs`` are set on the element in the standard DOM

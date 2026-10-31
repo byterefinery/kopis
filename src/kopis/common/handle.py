@@ -57,8 +57,6 @@ the live object it wraps — the object is already on that side, so it
 is passed as is.
 """
 
-from __future__ import annotations
-
 import platform
 from typing import Any
 
@@ -124,7 +122,7 @@ def _await_future(future: Any):
     return future.result()
 
 
-class _HandleAttr:
+class HandleAttr:
     """``handle.attr``: a method of the live object (or an attribute
     read, on the client, where the read cannot block the browser
     thread).
@@ -137,22 +135,22 @@ class _HandleAttr:
     """
 
     def __init__(self, handle: Handle, name: str) -> None:
-        self._handle = handle
-        self._name = name
+        self.handle = handle
+        self.name = name
 
     def __reduce__(self):
         # The stand-in travels like a handle: its handle travels (bound
         # again by the receiver when it decodes the message), and its
         # name is plain data.
-        return (_HandleAttr, (self._handle, self._name))
+        return (HandleAttr, (self.handle, self.name))
 
     def __call__(self, *args: object, **kwargs: object) -> Any:
-        return self._handle._kopis._handle_op(
-            self._handle, "call", self._name, args, kwargs
+        return self.handle._kopis._handle_op(
+            self.handle, "call", self.name, args, kwargs
         )
 
     def __await__(self):
-        result = self._handle._kopis._handle_op(self._handle, "getattr", self._name)
+        result = self.handle._kopis._handle_op(self.handle, "getattr", self.name)
         if platform.python_implementation() == "Brython":
             # The client's remote op returns a future (a native
             # promise): brython's await drives it natively.
@@ -167,25 +165,25 @@ class _HandleAttr:
         return _value(result)
 
     def __repr__(self) -> str:
-        return f"<Handle attribute {self._name!r}>"
+        return f"<Handle attribute {self.name!r}>"
 
 
-class _AsyncList:
+class AsyncList:
     """An async iterator over the items of the live object (the result
     of an ``iter`` operation on it)."""
 
     def __init__(self, items: list[Any]) -> None:
-        self._items = list(items)
-        self._index = 0
+        self.items = list(items)
+        self.index = 0
 
-    def __aiter__(self) -> _AsyncList:
+    def __aiter__(self) -> AsyncList:
         return self
 
     async def __anext__(self) -> Any:
-        if self._index >= len(self._items):
+        if self.index >= len(self.items):
             raise StopAsyncIteration
-        item = self._items[self._index]
-        self._index += 1
+        item = self.items[self.index]
+        self.index += 1
         return item
 
 
@@ -234,6 +232,8 @@ class Handle[T]:
         owner_id: str | None = None,
         true_repr: str = "",
     ) -> None:
+        # via object.__setattr__: the __setattr__ below routes public
+        # names to the live object (the own state must stay out of it)
         object.__setattr__(self, "_id", id)
         object.__setattr__(self, "_owner_side", owner_side)
         object.__setattr__(self, "_owner_id", owner_id)
@@ -266,7 +266,7 @@ class Handle[T]:
 
     def __getattr__(self, name: str) -> Any:
         # A (public) attribute of the live object: its value for a data
-        # attribute, a call stand-in (_HandleAttr) for a method — the
+        # attribute, a call stand-in (HandleAttr) for a method — the
         # getattr op is performed by this side's Kopis, which applies
         # it at once when this side owns the live object and travels it
         # to the owner otherwise.
@@ -295,9 +295,9 @@ class Handle[T]:
     def __delitem__(self, key: object) -> None:
         self._send_mutation("delitem", None, (key,))
 
-    def __aiter__(self) -> _AsyncList:
+    def __aiter__(self) -> AsyncList:
         items = self._kopis._handle_op(self, "iter")
-        return _AsyncList(items)
+        return AsyncList(items)
 
     def _send_mutation(self, op: str, name: str | None, args: tuple) -> None:
         """Perform a mutation (``setattr`` / ``setitem`` / ``delitem``).

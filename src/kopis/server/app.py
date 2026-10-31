@@ -113,7 +113,7 @@ def _entry_script() -> Path | None:
     return None
 
 
-class _Stream:
+class Stream:
     """An open WebSocket connection of a client, and the queue of messages
     to send on it.
 
@@ -161,7 +161,7 @@ class Kopis(KopisBase):
 
     #: The document created when the root has no ``index.html`` and
     #: ``k.document`` is never assigned (brython mode).
-    _DEFAULT_DOCUMENT = """\
+    DEFAULT_DOCUMENT = """\
 <!DOCTYPE html>
 <html>
     <head>
@@ -187,38 +187,38 @@ class Kopis(KopisBase):
             entry = _entry_script()
             self.root = entry.parent if entry is not None else Path.cwd()
 
-        self._entry = _entry_script()
-        self._brython = "brython" in self._use
+        self.entry = _entry_script()
+        self.brython = "brython" in self.uses
         self._document: str | None = None  # the HTML assigned to k.document
-        self._served: str | None = None  # cache of the document served at /
+        self.served: str | None = None  # cache of the document served at /
 
         # RPC state.
-        self._instance = uuid.uuid4().hex  # distinguishes call ids across restarts
-        self._pending_calls: dict[str, list[dict[str, Any]]] = {}
-        self._pending_results: dict[
+        self.instance = uuid.uuid4().hex  # distinguishes call ids across restarts
+        self.pending_calls: dict[str, list[dict[str, Any]]] = {}
+        self.pending_results: dict[
             int, asyncio.Future | concurrent.futures.Future[Any]
         ] = {}
-        self._relay: dict[
+        self.relay: dict[
             int, tuple[str, Any]
         ] = {}  # relayed op id -> (sender client, its id)
-        self._results: dict[tuple[str, Any], dict[str, Any]] = {}
+        self.results: dict[tuple[str, Any], dict[str, Any]] = {}
         # (client, id) -> result of its call or op, so a re-sent message
         # (a dropped connection) is answered without re-running it
-        self._inflight: set[tuple[str, Any]] = set()  # (client, id) still running
-        self._relay_origin: dict[tuple[str, Any], int] = {}
+        self.inflight: set[tuple[str, Any]] = set()  # (client, id) still running
+        self.relay_origin: dict[tuple[str, Any], int] = {}
         # (sender client, its op id) -> relay id
-        self._relay_results: dict[int, dict[str, Any]] = {}  # relay id -> its result
-        self._streams: dict[str, _Stream] = {}
-        self._next_call_id = itertools.count(1)
-        self._current_client: contextvars.ContextVar[str | None] = (
+        self.relay_results: dict[int, dict[str, Any]] = {}  # relay id -> its result
+        self.streams: dict[str, Stream] = {}
+        self.next_call_id = itertools.count(1)
+        self.current_client: contextvars.ContextVar[str | None] = (
             contextvars.ContextVar("kopis_current_client", default=None)
         )
         # User calls run on worker threads (off the event loop), so the
         # RPC state they touch is guarded by a lock, and the main loop
         # is remembered to schedule sends and result settlements onto
         # it from those threads.
-        self._rpc_lock = threading.Lock()
-        self._main_loop: asyncio.AbstractEventLoop | None = None
+        self.rpc_lock = threading.Lock()
+        self.main_loop: asyncio.AbstractEventLoop | None = None
 
         self.app = web.Application(middlewares=[_no_cache])
         # Sessions (cookie-based) identify which client a request comes
@@ -237,7 +237,7 @@ class Kopis(KopisBase):
 
         self.app.router.add_static("/", self.root, follow_symlinks=True)
 
-        if self._brython:
+        if self.brython:
             self._setup_brython()
 
         self.app.on_startup.append(self._capture_main_loop)
@@ -261,7 +261,7 @@ class Kopis(KopisBase):
         return browser.window
 
     @property
-    def html(self) -> browser._Html:
+    def html(self) -> browser.Html:
         """A stand-in of the brython ``browser.html`` builder (there is
         no live DOM on the server, so tag calls make stand-in
         elements that are never rendered)."""
@@ -270,7 +270,7 @@ class Kopis(KopisBase):
     @document.setter
     def document(self, value: str) -> None:
         self._document = value
-        self._served = None
+        self.served = None
         self._register_document()
 
     def _register_document(self) -> None:
@@ -290,16 +290,16 @@ class Kopis(KopisBase):
         index = self.root / "index.html"
         if index.is_file():
             return index.read_text()
-        if self._brython:
-            return self._DEFAULT_DOCUMENT
+        if self.brython:
+            return self.DEFAULT_DOCUMENT
         raise FileNotFoundError(index)
 
     def _served_document(self) -> str:
         """The document served at ``/`` (cached until changed)."""
-        if self._served is None:
+        if self.served is None:
             html = self._source_html()
-            self._served = self._annotate(html) if self._brython else html
-        return self._served
+            self.served = self._annotate(html) if self.brython else html
+        return self.served
 
     @staticmethod
     def _insert_before(html: str, close_tag: str, content: str) -> str:
@@ -320,7 +320,7 @@ class Kopis(KopisBase):
         """
         head_scripts = USES["brython"]
         body_scripts = ""
-        entry = self._entry
+        entry = self.entry
         if entry is not None and entry.is_file():
             body_scripts = f'<script type="text/python" src="/{entry.name}"></script>'
         if "<html" not in html.lower():
@@ -402,7 +402,7 @@ class Kopis(KopisBase):
 
     async def _capture_main_loop(self, app: web.Application) -> None:
         """Remember the web server's event loop (at startup)."""
-        self._main_loop = asyncio.get_running_loop()
+        self.main_loop = asyncio.get_running_loop()
 
     async def _run_startup_hooks(self, app: web.Application) -> None:
         """Run the app's startup hooks (``k.on_startup``) when the web
@@ -459,8 +459,8 @@ class Kopis(KopisBase):
         (re)connects, but the clients here are the ones reachable at
         once.
         """
-        with self._rpc_lock:
-            return [Client(self, client_id) for client_id in self._streams]
+        with self.rpc_lock:
+            return [Client(self, client_id) for client_id in self.streams]
 
     def call(
         self, client_id: str, method: str, *args: object, **kwargs: object
@@ -481,20 +481,20 @@ class Kopis(KopisBase):
         a function the client called, ``k.rpc.<name>`` targets that
         client without an id.
         """
-        call_id = next(self._next_call_id)
+        call_id = next(self.next_call_id)
         call: dict[str, Any] = {
             "type": "call",
             "id": call_id,
-            "instance": self._instance,
+            "instance": self.instance,
             "method": method,
             "args": list(args),
             "kwargs": kwargs,
         }
         encode(call)  # raises if a value in the call cannot be serialized
         future = asyncio.get_running_loop().create_future()
-        with self._rpc_lock:
-            self._pending_calls.setdefault(client_id, []).append(call)
-            self._pending_results[call_id] = future
+        with self.rpc_lock:
+            self.pending_calls.setdefault(client_id, []).append(call)
+            self.pending_results[call_id] = future
         self._send_safe(client_id, call)
         return future
 
@@ -502,7 +502,7 @@ class Kopis(KopisBase):
         self, name: str, args: tuple[object, ...], kwargs: dict[str, object]
     ) -> object:
         """Call a client function on the client that is currently being served."""
-        client_id = self._current_client.get()
+        client_id = self.current_client.get()
         if client_id is None:
             raise RuntimeError(
                 "k.rpc can only be used inside a function called by a client; "
@@ -523,14 +523,14 @@ class Kopis(KopisBase):
         A change made on the server itself (no client being served) is
         pushed to every connected client.
         """
-        result = shared._signal._setter(value)
+        result = shared.signal.setter(value)
         if iscoroutine(result):
             await result
-        origin = self._current_client.get()
+        origin = self.current_client.get()
         for client in self.clients:
-            if client._client_id == origin:
+            if client.client_id == origin:
                 continue
-            self.call(client._client_id, shared._setter_name, value)
+            self.call(client.client_id, shared.setter_name, value)
 
     async def _rpc_ws(self, request: web.Request) -> web.WebSocketResponse:
         """Handle a client's WebSocket connection (GET /__kopis__/rpc).
@@ -555,17 +555,17 @@ class Kopis(KopisBase):
 
         ws = web.WebSocketResponse(heartbeat=20)
         await ws.prepare(request)
-        stream = _Stream(ws)
-        with self._rpc_lock:
-            old = self._streams.get(client_id)
-            self._streams[client_id] = stream
+        stream = Stream(ws)
+        with self.rpc_lock:
+            old = self.streams.get(client_id)
+            self.streams[client_id] = stream
         if old is not None:
             old.close()
             try:
                 await old.ws.close()
             except Exception:  # noqa: BLE001, S110 - the old socket is usually already dead
                 pass
-        for call in list(self._pending_calls.get(client_id, [])):
+        for call in list(self.pending_calls.get(client_id, [])):
             stream.push(call)
         sender = asyncio.ensure_future(self._ws_send(stream, client_id))
         try:
@@ -581,9 +581,9 @@ class Kopis(KopisBase):
                 # An abnormal close (a dropped connection, a heartbeat
                 # failure, ...): worth seeing why.
                 print("kopis: ws closed", client_id, "code=", ws.close_code)
-            with self._rpc_lock:
-                if self._streams.get(client_id) is stream:
-                    del self._streams[client_id]
+            with self.rpc_lock:
+                if self.streams.get(client_id) is stream:
+                    del self.streams[client_id]
             sender.cancel()
             try:
                 await sender
@@ -591,7 +591,7 @@ class Kopis(KopisBase):
                 pass
         return ws
 
-    async def _ws_send(self, stream: _Stream, client_id: str) -> None:
+    async def _ws_send(self, stream: Stream, client_id: str) -> None:
         """Send queued messages to the client until the connection ends."""
         try:
             while True:
@@ -616,26 +616,26 @@ class Kopis(KopisBase):
         failure to the call or op that sent it, if it is still pending.
         """
         msg_id = message.get("id")
-        with self._rpc_lock:
-            calls = self._pending_calls.get(client_id)
+        with self.rpc_lock:
+            calls = self.pending_calls.get(client_id)
             if calls is not None:
                 calls = [c for c in calls if c.get("id") != msg_id]
                 if calls:
-                    self._pending_calls[client_id] = calls
+                    self.pending_calls[client_id] = calls
                 else:
-                    del self._pending_calls[client_id]
-            self._relay_results.pop(msg_id, None)
+                    del self.pending_calls[client_id]
+            self.relay_results.pop(msg_id, None)
             for key in [
                 key
-                for key, relay_id in self._relay_origin.items()
+                for key, relay_id in self.relay_origin.items()
                 if relay_id == msg_id
             ]:
-                del self._relay_origin[key]
-            future = self._pending_results.pop(msg_id, None)
-            origin = self._relay.pop(msg_id, None)
+                del self.relay_origin[key]
+            future = self.pending_results.pop(msg_id, None)
+            origin = self.relay.pop(msg_id, None)
             if future is None and origin is not None:
                 # A relayed op: report to the client that sent the op.
-                future = self._pending_results.pop(origin[1], None)
+                future = self.pending_results.pop(origin[1], None)
         if future is not None and not future.done():
             self._settle(
                 future, {"error": {"type": type(exc).__name__, "message": str(exc)}}
@@ -668,7 +668,7 @@ class Kopis(KopisBase):
         free to carry the round trip and deliver the reply. A coroutine
         function is driven by a fresh loop of the worker thread.
         """
-        func = self._bound.get(method) if isinstance(method, str) else None
+        func = self.bound.get(method) if isinstance(method, str) else None
         if func is None:
             return {
                 "error": {
@@ -703,7 +703,7 @@ class Kopis(KopisBase):
 
         async def run() -> dict[str, Any]:
             payload: dict[str, Any] = {"type": "result", "id": msg.get("id")}
-            token = self._current_client.set(client_id)
+            token = self.current_client.set(client_id)
             try:
                 payload.update(
                     await asyncio.to_thread(
@@ -714,7 +714,7 @@ class Kopis(KopisBase):
                     )
                 )
             finally:
-                self._current_client.reset(token)
+                self.current_client.reset(token)
             return payload
 
         await self._run_deduped(client_id, msg, run)
@@ -735,13 +735,13 @@ class Kopis(KopisBase):
         cannot be serialized is reported as the error of the result.
         """
         key = (client_id, msg.get("id"))
-        stored = self._results.get(key)
+        stored = self.results.get(key)
         if stored is not None:
             self._send_to(client_id, stored)
             return
-        if key in self._inflight:
+        if key in self.inflight:
             return
-        self._inflight.add(key)
+        self.inflight.add(key)
         try:
             try:
                 payload: dict[str, Any] = await run()
@@ -760,8 +760,8 @@ class Kopis(KopisBase):
                     "error": {"type": type(exc).__name__, "message": str(exc)},
                 }
         finally:
-            self._inflight.discard(key)
-        self._remember(self._results, key, payload)
+            self.inflight.discard(key)
+        self._remember(self.results, key, payload)
         self._send_to(client_id, payload)
 
     @staticmethod
@@ -777,7 +777,7 @@ class Kopis(KopisBase):
     def _send_to(self, client_id: str, message: dict[str, Any]) -> None:
         """Queue a message for the client, if it is connected (on the
         main loop)."""
-        stream = self._streams.get(client_id)
+        stream = self.streams.get(client_id)
         if stream is not None:
             stream.push(message)
 
@@ -788,7 +788,7 @@ class Kopis(KopisBase):
         thread (a user call running off the loop) it is scheduled onto
         the main loop — the send queue is not thread-safe.
         """
-        loop = self._main_loop
+        loop = self.main_loop
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:
@@ -830,7 +830,7 @@ class Kopis(KopisBase):
     def _route_op(self, client_id: str, msg: dict[str, Any]) -> None:
         """Run an op for a handle this side owns, or relay it to the
         client that owns the handle."""
-        with self._rpc_lock:
+        with self.rpc_lock:
             self._route_op_locked(client_id, msg)
 
     def _route_op_locked(self, client_id: str, msg: dict[str, Any]) -> None:
@@ -871,27 +871,27 @@ class Kopis(KopisBase):
         # twice: if the relay already has a result, it is re-sent to
         # the sender, and a relay that was dropped is relayed again.
         origin_key = (client_id, msg.get("id"))
-        relay_id = self._relay_origin.get(origin_key)
+        relay_id = self.relay_origin.get(origin_key)
         if relay_id is None:
-            relay_id = next(self._next_call_id)
-            self._relay[relay_id] = (client_id, msg.get("id"))
-            self._relay_origin[origin_key] = relay_id
+            relay_id = next(self.next_call_id)
+            self.relay[relay_id] = (client_id, msg.get("id"))
+            self.relay_origin[origin_key] = relay_id
             relayed = {**msg, "id": relay_id}
-            self._pending_calls.setdefault(owner_id, []).append(relayed)
+            self.pending_calls.setdefault(owner_id, []).append(relayed)
             self._send_to(owner_id, relayed)
             return
-        stored = self._relay_results.get(relay_id)
+        stored = self.relay_results.get(relay_id)
         if stored is not None:
             # The relay already finished; the sender missed its result.
             self._send_to(client_id, {**stored, "id": msg.get("id")})
-        elif relay_id in self._relay:
+        elif relay_id in self.relay:
             # Still pending: the sender gets the result when it comes.
             pass
         else:
             # The relay was dropped: relay it again.
-            self._relay[relay_id] = (client_id, msg.get("id"))
+            self.relay[relay_id] = (client_id, msg.get("id"))
             relayed = {**msg, "id": relay_id}
-            self._pending_calls.setdefault(owner_id, []).append(relayed)
+            self.pending_calls.setdefault(owner_id, []).append(relayed)
             self._send_to(owner_id, relayed)
 
     async def _run_client_op(self, client_id: str, msg: dict[str, Any]) -> None:
@@ -958,11 +958,11 @@ class Kopis(KopisBase):
         if owner_id is None:
             # A client-owned handle always carries the client's id.
             raise RpcError("ValueError", f"bad handle: {handle!r}")
-        call_id = next(self._next_call_id)
+        call_id = next(self.next_call_id)
         message: dict[str, Any] = {
             "type": "op",
             "id": call_id,
-            "instance": self._instance,
+            "instance": self.instance,
             "handle": handle,
             "op": op,
             "name": name,
@@ -971,9 +971,9 @@ class Kopis(KopisBase):
         }
         encode(message)  # raises if a value in the op cannot be serialized
         wait = concurrent.futures.Future()
-        with self._rpc_lock:
-            self._pending_calls.setdefault(owner_id, []).append(message)
-            self._pending_results[call_id] = wait
+        with self.rpc_lock:
+            self.pending_calls.setdefault(owner_id, []).append(message)
+            self.pending_results[call_id] = wait
         self._send_safe(owner_id, message)
         try:
             result = wait.result(timeout=_OP_TIMEOUT)
@@ -1012,24 +1012,24 @@ class Kopis(KopisBase):
         safely re-send results.
         """
         call_id = msg.get("id")
-        with self._rpc_lock:
-            future = self._pending_results.pop(call_id, None)
-            origin = self._relay.pop(call_id, None)
+        with self.rpc_lock:
+            future = self.pending_results.pop(call_id, None)
+            origin = self.relay.pop(call_id, None)
             if future is None and origin is None:
                 return
-            calls = self._pending_calls.get(client_id)
+            calls = self.pending_calls.get(client_id)
             if calls is not None:
                 calls = [c for c in calls if c.get("id") != call_id]
                 if calls:
-                    self._pending_calls[client_id] = calls
+                    self.pending_calls[client_id] = calls
                 else:
-                    del self._pending_calls[client_id]
+                    del self.pending_calls[client_id]
         if future is not None and not future.done():
             self._settle(future, msg)
         elif origin is not None:
             # A relayed op: remember the result, so an op the sender
             # re-sends after a dropped connection gets it again.
-            self._remember(self._relay_results, call_id, msg)
+            self._remember(self.relay_results, call_id, msg)
             self._send_to(origin[0], {**msg, "id": origin[1]})
 
     def for_(self, list_fn: Callable[[], Any]) -> For:

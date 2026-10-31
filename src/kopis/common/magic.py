@@ -12,8 +12,6 @@ The brython DOM interface works the same way: ``append``, ``+``
 nothing — there is no live DOM on the server.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Iterator
 from typing import Any, Self
 
@@ -68,6 +66,7 @@ class Magic:
         if event is not None:
             return _on_decorator(self, event)
         child = Magic()
+        # via object.__setattr__: __setattr__ is a no-op
         object.__setattr__(self, name, child)
         return child
 
@@ -114,20 +113,6 @@ class Magic:
         client (the server is a no-op either way). Returns ``self`` so
         calls can be chained."""
         return self
-
-    def __add__(self, other: object) -> Magic:
-        """Group with ``other`` at the same level (the brython ``+``)."""
-        return Magic()
-
-    def __radd__(self, other: object) -> Magic:
-        return Magic()
-
-    def __mul__(self, other: object) -> Magic:
-        """A group of deep copies (the brython ``*``)."""
-        return Magic()
-
-    def __rmul__(self, other: object) -> Magic:
-        return Magic()
 
     def __enter__(self) -> Self:
         """Support the brython ``with element:`` form."""

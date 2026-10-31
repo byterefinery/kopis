@@ -26,8 +26,6 @@ the lifetime of the app when the block ends; :meth:`Effect.dispose`
 stops it early.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any, Self
 
@@ -51,15 +49,15 @@ class Effect:
 
     #: This effect's observations, as ``(signal, callback)`` pairs (the
     #: ones it removes on :meth:`dispose`).
-    _subscriptions: list[tuple[Signal, Callable[[], Any]]]
+    subscriptions: list[tuple[Signal, Callable[[], Any]]]
 
     #: The update callback of the read :meth:`track` is currently
     #: tracking, else ``None``.
-    _tracking: Callable[[], Any] | None
+    tracking: Callable[[], Any] | None
 
     def __init__(self) -> None:
-        object.__setattr__(self, "_subscriptions", [])
-        object.__setattr__(self, "_tracking", None)
+        self.subscriptions = []
+        self.tracking = None
 
     def __enter__(self) -> Self:
         """Enter the effect's scope: the signal reads of the block run
@@ -84,20 +82,20 @@ class Effect:
 
         Returns what ``child`` returned (a value, or a coroutine).
         """
-        previous = self._tracking
-        self._tracking = update
+        previous = self.tracking
+        self.tracking = update
         try:
             return child()
         finally:
-            self._tracking = previous
+            self.tracking = previous
 
     def observe(self, signal: Signal, update: Callable[[], Any]) -> None:
         """Register ``update`` as an observer of ``signal`` (the solidjs
         way the effect observes the signals it reads): a no-op if
         ``update`` is already registered with ``signal``."""
         pair = (signal, update)
-        if pair not in self._subscriptions:
-            self._subscriptions.append(pair)
+        if pair not in self.subscriptions:
+            self.subscriptions.append(pair)
             signal._observe(update)
 
     def dispose(self) -> None:
@@ -105,9 +103,9 @@ class Effect:
         signals it reads are no longer updated by it."""
         if _scopes and _scopes[-1] is self:
             _scopes.pop()
-        for signal, update in self._subscriptions:
+        for signal, update in self.subscriptions:
             signal._forget(update)
-        self._subscriptions.clear()
+        self.subscriptions.clear()
 
     def __repr__(self) -> str:
-        return f"<Effect {len(self._subscriptions)} observation(s)>"
+        return f"<Effect {len(self.subscriptions)} observation(s)>"

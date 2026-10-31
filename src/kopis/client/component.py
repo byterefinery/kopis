@@ -34,7 +34,7 @@ the new value — a value or the resolution of a new coroutine — takes
 the value's place among the children). A call of a registered signal
 getter in the read (``k.get_count()`` — a getter registered with
 ``k.register`` on this side) is a read of that getter, and is tracked
-the same way (see :class:`~kopis.common.base._RpcCall`). A re-done read
+the same way (see :class:`~kopis.common.base.RpcCall`). A re-done read
 supersedes the previous one, and a pending resolution of a superseded
 read is dropped: the reads' resolutions are not ordered among
 themselves, and the value of the newest read wins.

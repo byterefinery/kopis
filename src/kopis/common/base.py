@@ -72,12 +72,10 @@ the two sides do the same way:
 - :meth:`_settle_result`, which resolves the future of a pending call
   from its ``result`` message;
 - the registry of live objects this side keeps for values wrapped in
-  handles (:attr:`_handles`), and the ``Handle``s that stand in for
+  handles (:attr:`handles`), and the ``Handle``s that stand in for
   them on the other side (:meth:`handle`, :meth:`get_handle`,
   :meth:`_apply_op`).
 """
-
-from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
@@ -87,9 +85,9 @@ from pathlib import Path
 from typing import Any, Self
 
 from .effect import Effect
-from .handle import Handle, _HandleAttr
+from .handle import Handle, HandleAttr
 from .magic import _event_name, _on_decorator
-from .signal import SharedSignal, Signal, _SignalGetter
+from .signal import SharedSignal, Signal, SignalGetter
 from .tags import TAGS
 from .uses import USES
 from .wire import RpcError
@@ -97,7 +95,7 @@ from .wire import RpcError
 __all__ = ["Client", "KopisBase"]
 
 
-class _RpcCall:
+class RpcCall:
     """``k.rpc.name`` (and the short way ``k.name``): a callable that
     calls the function ``name`` registered on the other side.
 
@@ -114,12 +112,13 @@ class _RpcCall:
     element itself (``k.window.name.onclick``), not through the app.
     """
 
-    _owner: KopisBase
-    _name: str
+    owner: KopisBase
+    name: str
 
     def __init__(self, owner: KopisBase, name: str) -> None:
-        object.__setattr__(self, "_owner", owner)
-        object.__setattr__(self, "_name", name)
+        # via object.__setattr__: the __setattr__ below raises for all names
+        object.__setattr__(self, "owner", owner)
+        object.__setattr__(self, "name", name)
 
     def __call__(self, *args: object, **kwargs: object) -> object:
         # The local read of a getter registered on this side under the
@@ -129,26 +128,26 @@ class _RpcCall:
         # re-runs the read (which re-fetches the value from the other
         # side); the local value itself is not used. Outside a
         # tracking scope the read has no effect.
-        func = self._owner._bound.get(self._name)
-        if isinstance(func, _SignalGetter):
+        func = self.owner.bound.get(self.name)
+        if isinstance(func, SignalGetter):
             func()
-        return self._owner._rpc_call(self._name, args, kwargs)
+        return self.owner._rpc_call(self.name, args, kwargs)
 
     def __getattr__(self, name: str) -> Any:
         raise AttributeError(name)
 
     def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError(
-            f"the RPC call {self._name!r} has no attribute {name!r}; "
+            f"the RPC call {self.name!r} has no attribute {name!r}; "
             f"to bind the event handler of the element with that id, "
-            f"use k.window.{self._name}.on<event>"
+            f"use k.window.{self.name}.on<event>"
         )
 
     def __repr__(self) -> str:
-        return f"<RPC call {self._name!r}>"
+        return f"<RPC call {self.name!r}>"
 
 
-class _Rpc:
+class Rpc:
     """Proxy for ``k.rpc``: ``k.rpc.name(args)`` calls a function
     registered on the other side.
 
@@ -163,7 +162,7 @@ class _Rpc:
     """
 
     def __init__(self, owner: KopisBase) -> None:
-        self._owner = owner
+        self.owner = owner
 
     @property
     def register(self) -> Callable[..., Any]:
@@ -172,14 +171,14 @@ class _Rpc:
         The owner's :meth:`KopisBase.register`; ``k.register`` is the
         short way for ``k.rpc.register``.
         """
-        return self._owner.register
+        return self.owner.register
 
-    def __getattr__(self, name: str) -> _RpcCall:
+    def __getattr__(self, name: str) -> RpcCall:
         """A callable that calls the function ``name`` registered on
         the other side (``k.rpc.name`` / ``k.name``)."""
         if name.startswith("_"):
             raise AttributeError(name)
-        return _RpcCall(self._owner, name)
+        return RpcCall(self.owner, name)
 
 
 class Client:
@@ -198,12 +197,12 @@ class Client:
     so a :class:`Client` only ever exists on the server.
     """
 
-    _owner: KopisBase
-    _client_id: str
+    owner: KopisBase
+    client_id: str
 
     def __init__(self, owner: KopisBase, client_id: str) -> None:
-        object.__setattr__(self, "_owner", owner)
-        object.__setattr__(self, "_client_id", client_id)
+        self.owner = owner
+        self.client_id = client_id
 
     def __getattr__(self, name: str) -> Callable[..., Any]:
         """A callable that calls the function ``name`` the client
@@ -211,7 +210,7 @@ class Client:
         resolves with its result (await it)."""
         if name.startswith("_"):
             raise AttributeError(name)
-        owner, client_id = self._owner, self._client_id
+        owner, client_id = self.owner, self.client_id
 
         def _call(*args: object, **kwargs: object) -> Any:
             return owner.call(client_id, name, *args, **kwargs)
@@ -219,10 +218,10 @@ class Client:
         return _call
 
     def __repr__(self) -> str:
-        return f"<client {self._client_id!r}>"
+        return f"<client {self.client_id!r}>"
 
 
-class _OnStartup(list):
+class OnStartup(list):
     """The app's list of startup hooks (the ``k.on_startup`` attribute).
 
     Adding a hook — with :meth:`append`, or with the decorator form
@@ -235,16 +234,16 @@ class _OnStartup(list):
     the app code itself, which Brython runs in the browser.
     """
 
-    _owner: KopisBase
+    owner: KopisBase
 
     def __init__(self, owner: KopisBase) -> None:
-        self._owner = owner
+        self.owner = owner
 
     def append(self, func: Callable[..., Any]) -> None:
         """Add the startup hook ``func`` (and start it at this side's
         startup — see the class docstring)."""
         list.append(self, func)
-        self._owner._start_startup_hook(func)
+        self.owner._start_startup_hook(func)
 
     def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
         """The decorator form of :meth:`append` (the two have the same
@@ -322,22 +321,22 @@ class KopisBase(ABC):
         # or tuple of strings, or None for none); ``"brython"`` by
         # default, as with any other dependency in
         # :data:`~kopis.common.uses.USES`.
-        self._use: list[str] = (
+        self.uses: list[str] = (
             [] if use is None else [use] if isinstance(use, str) else list(use)
         )
-        self._bound: dict[str, Callable[..., Any]] = {}
+        self.bound: dict[str, Callable[..., Any]] = {}
         # The app's startup hooks (the ``k.on_startup`` attribute):
         # the server runs them when the web server starts, and the
         # client starts them at once when they are added (its startup
         # is the app code itself).
-        self.on_startup: _OnStartup = _OnStartup(self)
-        self.rpc = _Rpc(self)
+        self.on_startup: OnStartup = OnStartup(self)
+        self.rpc = Rpc(self)
         # The live objects this side keeps for values it could not
         # serialize, and the handles that stand in for them on the
         # other side.
-        self._handles: dict[int, Any] = {}
-        self._next_handle_id = count(1)
-        self._owner_id: str | None = (
+        self.handles: dict[int, Any] = {}
+        self.next_handle_id = count(1)
+        self.owner_id: str | None = (
             None  # this side's identity in the handles it makes
         )
         # The next number of a shared signal of the app (1-based; the
@@ -345,9 +344,9 @@ class KopisBase(ABC):
         # names, and must match between the sides — the shared signals
         # are created by the unified code, in the same order, on both
         # sides).
-        self._next_shared_signal = 1
+        self.next_shared_signal = 1
         # The dependencies of the constructor, as with k.use(...).
-        self.use(*self._use)
+        self.use(*self.uses)
 
     # -- unified API ------------------------------------------------------
 
@@ -440,10 +439,10 @@ class KopisBase(ABC):
         """
         shared = SharedSignal(self, value, on_change)
         if self.is_server():
-            self._bound[shared._getter_name] = shared._getter
-            self._bound[shared._setter_name] = shared._setter
+            self.bound[shared.getter_name] = shared.getter
+            self.bound[shared.setter_name] = shared.setter
         else:
-            self._bound[shared._setter_name] = shared._push_handler()
+            self.bound[shared.setter_name] = shared._push_handler()
         return shared
 
     def effect(self) -> Effect:
@@ -534,7 +533,7 @@ class KopisBase(ABC):
             async def add(x, y):
                 return x + y
         """
-        self._bound[func.__name__] = func  # ty: ignore[unresolved-attribute] - a named function is required
+        self.bound[func.__name__] = func  # ty: ignore[unresolved-attribute] - a named function is required
         return func
 
     def __getattr__(self, name: str) -> Any:
@@ -610,16 +609,16 @@ class KopisBase(ABC):
         this side, and return the handle that stands in for it.
 
         This is the wrap behind :meth:`get_handle`. The live object
-        stays in :attr:`_handles`, and the handle — which carries this
+        stays in :attr:`handles`, and the handle — which carries this
         side's identity — is what is sent to the other side.
         """
-        handle_id = next(self._next_handle_id)
-        self._handles[handle_id] = value
+        handle_id = next(self.next_handle_id)
+        self.handles[handle_id] = value
         try:
             true_repr = repr(value)
         except Exception as exc:  # noqa: BLE001 - the live repr is best effort
             true_repr = f"<unreprable {type(exc).__name__}>"
-        handle = Handle(handle_id, self.side, self._owner_id, true_repr)
+        handle = Handle(handle_id, self.side, self.owner_id, true_repr)
         handle._kopis = self  # the handle is usable on this side at once
         return handle
 
@@ -675,13 +674,13 @@ class KopisBase(ABC):
         coroutine method was called (the caller awaits it).
 
         A ``getattr`` of a callable attribute returns a
-        :class:`~kopis.common.handle._HandleAttr` stand-in: the method
+        :class:`~kopis.common.handle.HandleAttr` stand-in: the method
         itself cannot travel, but the stand-in travels, and invoking
         it fires a ``call`` op. The owner side decides whether the op
         can be performed: any failure raises, and is reported to the
         other side as the error of the op's result.
         """
-        obj = self._handles.get(handle._id)
+        obj = self.handles.get(handle._id)
         if obj is None:
             raise LookupError(f"no live object behind {handle!r}")
         if op == "getattr":
@@ -693,7 +692,7 @@ class KopisBase(ABC):
                     f"attribute {name!r} is a coroutine object; it cannot travel"
                 )
             if callable(value):
-                return _HandleAttr(handle, name)
+                return HandleAttr(handle, name)
             return value
         if op == "call":
             if name is None:
@@ -718,7 +717,7 @@ class KopisBase(ABC):
 
     def _handle_getattr(self, handle: Handle, name: str) -> Any:
         """The result of ``handle.<name>``: the live value of a data
-        attribute, or a :class:`~kopis.common.handle._HandleAttr`
+        attribute, or a :class:`~kopis.common.handle.HandleAttr`
         stand-in for a method (a ``getattr`` op performed by
         :meth:`_handle_op`, so it applies at once on this side and
         travels to the owner otherwise)."""
@@ -775,7 +774,7 @@ class KopisBase(ABC):
         and ``kwargs`` are the arguments sent by the other side,
         restored from their pickles.
         """
-        func = self._bound.get(method) if isinstance(method, str) else None
+        func = self.bound.get(method) if isinstance(method, str) else None
         if func is None:
             return {
                 "error": {

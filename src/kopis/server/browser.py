@@ -61,6 +61,7 @@ class Node(Magic):
     _html: str
 
     def __init__(self, html: str = "") -> None:
+        # via object.__setattr__: Magic.__setattr__ is a no-op
         object.__setattr__(self, "_html", html)
 
     def __getattr__(self, name: str) -> Any:
@@ -77,6 +78,7 @@ class Node(Magic):
         if event is not None:
             return _on_decorator(self, event)
         child = Node()
+        # via object.__setattr__: Magic.__setattr__ is a no-op
         object.__setattr__(self, name, child)
         return child
 
@@ -164,13 +166,14 @@ class Event(Magic):
     type: str
 
     def __init__(self, type: str = "") -> None:
+        # via object.__setattr__: Magic.__setattr__ is a no-op
         object.__setattr__(self, "type", type)
 
 
 _document: Node | None = None
 
 
-class _Document(Node):
+class Document(Node):
     """A lazy stand-in of the brython ``browser.document`` object.
 
     Delegates everything to the document of the running application
@@ -221,7 +224,7 @@ class _Document(Node):
 #: The document of the running application (the brython
 #: ``browser.document`` object; a :class:`Node` of the raw HTML
 #: string the application serves).
-document = _Document()
+document = Document()
 
 
 def set_document(html: str) -> None:
@@ -250,7 +253,7 @@ def bind(
     return decorator
 
 
-class _Html:
+class Html:
     """A stand-in for the brython ``browser.html`` builder.
 
     Every tag call (``html.BUTTON("hi", id="x")``) makes a new
@@ -271,7 +274,7 @@ class _Html:
 
 
 #: The stand-in of the brython ``browser.html`` builder.
-html = _Html()
+html = Html()
 
 #: The browser window (a stand-in: the server has no window).
 window = Magic()

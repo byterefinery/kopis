@@ -14,7 +14,7 @@ setter, in the spirit of solidjs signals, the ``SharedSignal`` class
 (a :class:`~kopis.common.signal.SharedSignal` — a signal whose value is
 shared between the server and the clients), the ``Effect`` class
 (:mod:`~kopis.common.effect`), a reactive scope of the signals, in the
-spirit of solidjs's ``createEffect``, and the ``_Item`` class
+spirit of solidjs's ``createEffect``, and the ``Item`` class
 (:mod:`~kopis.common.for_`), the ``as`` variable of a ``For`` loop (the
 loop itself is a side class — :mod:`~kopis.client.for_` and
 :mod:`~kopis.server.for_`), with the client-side dependencies for
