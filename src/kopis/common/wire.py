@@ -3,7 +3,7 @@
 Calls and results travel both ways over a single WebSocket per client.
 Messages are JSON, so they stay readable in the browser's network
 inspector: a message is either a ``call`` (function name, ``args``,
-``kwargs``), an ``op`` (an operation on an ``RPCHandle``: its
+``kwargs``), an ``op`` (an operation on an ``Handle``: its
 ``handle``, ``op``, ``name``, ``args``, ``kwargs``), or a ``result``; a
 function name is a string, ``args`` is a list, and ``kwargs`` is an
 object with string keys. The *values* of ``args``, ``kwargs``, and any
@@ -12,12 +12,12 @@ base64-encoded so they fit inside the JSON.
 
 A value that cannot be pickled on the sender side does not travel:
 ``encode`` raises, and the sender wraps the value in an explicit
-:class:`RPCHandle` (``Kopis.get_handle``) instead — the live object
+:class:`Handle` (``Kopis.get_handle``) instead — the live object
 stays alive on the side where it is, and the handle travels. A value
 that cannot be unpickled on the receiver side (for example because its
 type does not exist there) is reported to the sender as the error of
 the message that carried it. ``decode`` takes a ``binder`` (the
-receiving ``Kopis``) that binds every ``RPCHandle`` in the message to
+receiving ``Kopis``) that binds every ``Handle`` in the message to
 it, so operations on the handles go through that side. A handle that
 has come back to the side where it was made is unwrapped there: it is
 replaced by the live object it wraps, which is right there on that
@@ -29,7 +29,7 @@ import json
 import pickle
 from typing import Any
 
-from .handle import RPCHandle, _HandleAttr
+from .handle import Handle, _HandleAttr
 
 __all__ = ["WS_PATH", "RpcError", "decode", "encode"]
 
@@ -50,7 +50,7 @@ def _pack(value: Any) -> str:
     """Serialize ``value`` to a base64 string of its pickle.
 
     Raises if the value cannot be pickled: such a value does not
-    travel, and the sender wraps it in an explicit ``RPCHandle``
+    travel, and the sender wraps it in an explicit ``Handle``
     (``Kopis.get_handle``) if it should.
     """
     data = pickle.dumps(value)
@@ -68,7 +68,7 @@ def _unpack(text: str) -> Any:
 
 
 def _bind(value: Any, binder: Any) -> Any:
-    """Bind every ``RPCHandle`` in ``value`` to ``binder`` (recursively),
+    """Bind every ``Handle`` in ``value`` to ``binder`` (recursively),
     and replace a handle by its live object when the handle has come
     back to the side where it was made (see :func:`_unwrap`). Returns
     the value, possibly replaced — or, for an immutable container,
@@ -78,7 +78,7 @@ def _bind(value: Any, binder: Any) -> Any:
         # go through the receiving side.
         value._handle = _bind(value._handle, binder)
         return value
-    if isinstance(value, RPCHandle):
+    if isinstance(value, Handle):
         value._kopis = binder
         live = _unwrap(value, binder)
         return live if live is not None else value
@@ -106,7 +106,7 @@ def _bind(value: Any, binder: Any) -> Any:
     return value
 
 
-def _unwrap(handle: RPCHandle, binder: Any) -> Any:
+def _unwrap(handle: Handle, binder: Any) -> Any:
     """The live object a handle wraps, when the handle has come back to
     the side where it was made and the object is still kept there —
     otherwise ``None``.
@@ -151,7 +151,7 @@ def decode(text: str, binder: Any = None) -> Any:
     """Parse an RPC message from a JSON string, restoring pickled values.
 
     Raises if any pickled value cannot be unpickled. If ``binder`` (the
-    receiving ``Kopis``) is given, every ``RPCHandle`` in the message is
+    receiving ``Kopis``) is given, every ``Handle`` in the message is
     bound to it, so operations on the handles go through that side, and
     a handle that has come back to the side where it was made is
     replaced by the live object it wraps — in the values of ``args``,

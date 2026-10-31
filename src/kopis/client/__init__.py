@@ -8,7 +8,7 @@ are no-ops here; ``k.document`` is the browser document (the live DOM);
 and ``k.register``/``k.rpc`` implement the RPC client half.
 
 The brython objects the unified code works with — ``document``,
-``window``, ``bind``, ``DOMNode``, ``DOMEvent``, ``html``, ``aio``,
+``window``, ``bind``, ``Node``, ``Event``, ``html``, ``aio``,
 ``ajax``, ``timer``, and ``javascript`` — are the built-in ``browser``
 and ``javascript`` modules, re-exported under the ``kopis`` names: app
 code imports them from ``kopis``, never from ``browser`` directly.
@@ -23,8 +23,8 @@ from browser import (
     aio,
     ajax,
     bind,
-    DOMEvent,
-    DOMNode,
+    DOMEvent as Event,
+    DOMNode as Node,
     document,
     html,
     timer,
@@ -40,7 +40,7 @@ from ..common import (
     Client,
     CONTAINER_TAGS,
     Effect,
-    RPCHandle,
+    Handle,
     RpcError,
     SharedSignal,
     Signal,
@@ -54,12 +54,12 @@ __all__ = [
     "VOID_TAGS",
     "Client",
     "Component",
-    "DOMEvent",
-    "DOMNode",
     "Effect",
+    "Event",
     "For",
+    "Handle",
     "Kopis",
-    "RPCHandle",
+    "Node",
     "RpcError",
     "SharedSignal",
     "Signal",
@@ -77,5 +77,5 @@ __all__ = [
 # an HTML fragment first, and a coroutine function bound to an event is
 # started with aio.run when the event fires. (The component module
 # installs it as well, so that the Component class is built over the
-# extended DOMNode; the call here is a no-op then.)
+# extended Node; the call here is a no-op then.)
 _install_dom()

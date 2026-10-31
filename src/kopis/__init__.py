@@ -24,7 +24,7 @@ client, the ``Component`` base of the components (a component instance
 is its own root element — see ``kopis.common.component``), and the
 brython objects
 ``document``,
-``DOMNode``, ``DOMEvent``, ``bind``, ``html``, ``aio``, ``ajax``,
+``Node``, ``Event``, ``bind``, ``html``, ``aio``, ``ajax``,
 ``timer``, ``window``, and ``javascript`` — so a single application file
 can run unmodified on both sides; only the implementations differ
 (e.g. ``k.run()`` starts the web server on the server and is a no-op on
@@ -34,7 +34,7 @@ because the server has no live DOM and never parses the HTML it serves
 — the browser does that for it, in the brython way. Values exchanged
 between the sides are pickled by the shared ``kopis.common`` package; a
 value that cannot be serialized does not travel — sending it raises,
-and the developer wraps it in an explicit ``RPCHandle``
+and the developer wraps it in an explicit ``Handle``
 (``k.get_handle``) through which the other side operates on the live
 object.
 
@@ -73,12 +73,12 @@ __all__ = [
     "VOID_TAGS",
     "Client",
     "Component",
-    "DOMEvent",
-    "DOMNode",
     "Effect",
+    "Event",
     "For",
+    "Handle",
     "Kopis",
-    "RPCHandle",
+    "Node",
     "RpcError",
     "SharedSignal",
     "Signal",
@@ -102,7 +102,7 @@ if IS_CLIENT:
         Effect,
         For,
         Kopis,
-        RPCHandle,
+        Handle,
         RpcError,
         SharedSignal,
         TAGS,
@@ -110,8 +110,8 @@ if IS_CLIENT:
         aio,
         ajax,
         bind,
-        DOMEvent,
-        DOMNode,
+        Event,
+        Node,
         document,
         html,
         javascript,
@@ -129,7 +129,7 @@ else:
         Effect,
         For,
         Kopis,
-        RPCHandle,
+        Handle,
         RpcError,
         SharedSignal,
         TAGS,
@@ -137,8 +137,8 @@ else:
         aio,
         ajax,
         bind,
-        DOMEvent,
-        DOMNode,
+        Event,
+        Node,
         document,
         html,
         javascript,

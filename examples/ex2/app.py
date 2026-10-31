@@ -1,6 +1,6 @@
 from random import randint
 
-from kopis import Kopis, DOMEvent, For
+from kopis import Kopis, Event, For
 from kopis.daisyui import Button, List, ListCell, ListRow, Table
 
 
@@ -17,14 +17,14 @@ get_profiles, set_profiles = k.shared_signal([
 ])
 
 
-async def inc_count(e: DOMEvent):
+async def inc_count(e: Event):
     print("inc_count", e.type)
     count = await get_count()
     count += 1
     await set_count(count)
 
 
-async def add_new_profile(e: DOMEvent):
+async def add_new_profile(e: Event):
     profile = {
         'name': f'John Doe {randint(0, 100)}',
         'dob': 1980 + randint(0, 20),

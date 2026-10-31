@@ -1,4 +1,4 @@
-from kopis import Kopis, DOMEvent
+from kopis import Kopis, Event
 from kopis.daisyui import Button
 
 
@@ -11,7 +11,7 @@ k.document.documentElement.setAttribute("data-theme", "dark")
 get_count, set_count = k.shared_signal(0)
 
 
-async def inc_count(e: DOMEvent):
+async def inc_count(e: Event):
     print("inc_count", e)
     count = await get_count()
     count += 1

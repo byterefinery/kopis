@@ -72,7 +72,7 @@ the two sides do the same way:
 - :meth:`_settle_result`, which resolves the future of a pending call
   from its ``result`` message;
 - the registry of live objects this side keeps for values wrapped in
-  handles (:attr:`_handles`), and the ``RPCHandle``s that stand in for
+  handles (:attr:`_handles`), and the ``Handle``s that stand in for
   them on the other side (:meth:`handle`, :meth:`get_handle`,
   :meth:`_apply_op`).
 """
@@ -87,7 +87,7 @@ from pathlib import Path
 from typing import Any, Self
 
 from .effect import Effect
-from .handle import RPCHandle, _HandleAttr
+from .handle import Handle, _HandleAttr
 from .magic import _event_name, _on_decorator
 from .signal import SharedSignal, Signal, _SignalGetter
 from .tags import TAGS
@@ -605,8 +605,8 @@ class KopisBase(ABC):
 
     # -- RPC ----------------------------------------------------------------
 
-    def handle(self, value: object) -> RPCHandle:
-        """Wrap ``value`` in an ``RPCHandle``: keep ``value`` alive on
+    def handle(self, value: object) -> Handle:
+        """Wrap ``value`` in an ``Handle``: keep ``value`` alive on
         this side, and return the handle that stands in for it.
 
         This is the wrap behind :meth:`get_handle`. The live object
@@ -619,12 +619,12 @@ class KopisBase(ABC):
             true_repr = repr(value)
         except Exception as exc:  # noqa: BLE001 - the live repr is best effort
             true_repr = f"<unreprable {type(exc).__name__}>"
-        handle = RPCHandle(handle_id, self.side, self._owner_id, true_repr)
+        handle = Handle(handle_id, self.side, self._owner_id, true_repr)
         handle._kopis = self  # the handle is usable on this side at once
         return handle
 
-    def get_handle(self, value: object) -> RPCHandle:
-        """Get an ``RPCHandle`` to ``value``, to send to the other side.
+    def get_handle(self, value: object) -> Handle:
+        """Get an ``Handle`` to ``value``, to send to the other side.
 
         Works for any object — picklable or not: the live object stays
         on this side, and operations on the handle on the other side
@@ -638,7 +638,7 @@ class KopisBase(ABC):
     @abstractmethod
     def _handle_op(
         self,
-        handle: RPCHandle,
+        handle: Handle,
         op: str,
         name: str | None = None,
         args: tuple[object, ...] = (),
@@ -664,7 +664,7 @@ class KopisBase(ABC):
 
     def _apply_op(
         self,
-        handle: RPCHandle,
+        handle: Handle,
         op: str,
         name: str | None,
         args: Sequence[object],
@@ -714,9 +714,9 @@ class KopisBase(ABC):
             return None
         if op == "iter":
             return list(obj)
-        raise ValueError(f"unknown RPCHandle op {op!r}")
+        raise ValueError(f"unknown Handle op {op!r}")
 
-    def _handle_getattr(self, handle: RPCHandle, name: str) -> Any:
+    def _handle_getattr(self, handle: Handle, name: str) -> Any:
         """The result of ``handle.<name>``: the live value of a data
         attribute, or a :class:`~kopis.common.handle._HandleAttr`
         stand-in for a method (a ``getattr`` op performed by

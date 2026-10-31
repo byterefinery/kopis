@@ -3,7 +3,7 @@
 A *component* is a class that builds a piece of the document. A
 component instance is **its own root element**: each side builds its
 :class:`~kopis.Component` class with :func:`make_component` over its own
-``DOMNode`` class, and the instance is created with
+``Node`` class, and the instance is created with
 ``document.createElement(tag)`` and reclassified into the component
 class — so the brython element interface works on a component directly:
 ``append``, ``+`` (group), ``*`` (clone), attribute subscripts
@@ -83,7 +83,7 @@ def make_component(
     resolve_async: Callable[[Any, Any], Any] | None = None,
     reactive: Callable[[Any, Any], Any] | None = None,
 ) -> type:
-    """Build a ``Component`` class over the ``DOMNode`` class ``base``.
+    """Build a ``Component`` class over the ``Node`` class ``base``.
 
     ``create_element(tag)`` makes the root element (the side's
     ``document.createElement`` — the client's extension appends it to
@@ -101,16 +101,16 @@ def make_component(
     :mod:`kopis.client.component`.
 
     The class is built with ``type`` and every method goes into its own
-    namespace: under Brython a ``DOMNode`` subclass resolves its dunders
-    (``__iter__``, ...) only through the ``DOMNode`` base, and an
+    namespace: under Brython a ``Node`` subclass resolves its dunders
+    (``__iter__``, ...) only through the ``Node`` base, and an
     ``__init__`` found below it is never called — so the shared logic
-    cannot live in a mixin between the class and its ``DOMNode`` base.
+    cannot live in a mixin between the class and its ``Node`` base.
     """
 
     def __new__(cls: Any, *args: object, **kwargs: object) -> Any:
         """Create the root element and turn it into a component.
 
-        A ``DOMNode`` instance cannot be built from Python (brython
+        A ``Node`` instance cannot be built from Python (brython
         binds the element to the instance itself), so the instance is
         the element created for it, reclassified into the component
         class — the same way ``document`` gets its attribute access by
@@ -124,7 +124,7 @@ def make_component(
         """Build the root element.
 
         ``children`` are appended to it, in order: a string is text or
-        markup (parsed as a fragment on the client), a ``DOMNode`` or
+        markup (parsed as a fragment on the client), a ``Node`` or
         another component is an element (one already elsewhere moves
         here, as in the DOM), and a function (or a coroutine function)
         is called, with no arguments, to get the value — a value it
@@ -157,7 +157,7 @@ def make_component(
         if classes:
             attrs["class"] = " ".join(classes)
         for key, value in attrs.items():
-            # The ``__setitem__`` of the ``DOMNode`` base: an
+            # The ``__setitem__`` of the ``Node`` base: an
             # ``on<event>`` key binds the event handler, any other key
             # sets the attribute.
             self[_attr_name(key)] = value

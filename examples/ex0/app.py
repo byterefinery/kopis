@@ -1,4 +1,4 @@
-from kopis import Kopis, DOMEvent, RPCHandle, IS_SERVER, IS_CLIENT
+from kopis import Kopis, Event, Handle, IS_SERVER, IS_CLIENT
 
 
 if IS_SERVER:
@@ -58,9 +58,7 @@ class Point:
 
 
 @k.register
-async def server_button_click(
-    name: str, e: RPCHandle[DOMEvent], point: RPCHandle[Point]
-) -> int:
+async def server_button_click(name: str, e: Handle[Event], point: Handle[Point]) -> int:
     print("server_button_click", e, point)
     await point.set_xy(-1, -2)
     x, y = point.get_xy()
@@ -72,12 +70,12 @@ async def server_button_click(
 
 
 @k.register
-async def client_button_click(name: str, e: DOMEvent, point: Point) -> int:
+async def client_button_click(name: str, e: Event, point: Point) -> int:
     print("client_button_click", name, e, point)
     return 29
 
 
-async def btn0_click(e: DOMEvent):
+async def btn0_click(e: Event):
     print("btn0_click", e)
     point = Point(3, 4)
 

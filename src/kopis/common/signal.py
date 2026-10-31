@@ -40,7 +40,7 @@ is the same kind of object, bound to the name you gave it
 
 Like any other value, a getter or setter that cannot be pickled does not
 travel: sending one over RPC raises, and the developer wraps it in an
-explicit :class:`~kopis.common.RPCHandle` (``k.get_handle``) if it
+explicit :class:`~kopis.common.Handle` (``k.get_handle``) if it
 should.
 
 A signal also has observers, in the spirit of solidjs: a getter read

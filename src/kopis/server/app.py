@@ -10,10 +10,10 @@ files from anywhere on disk at a chosen URL.
 The server never parses the document: in the brython way, the browser
 parses the HTML it loads. (The client can parse fragments on demand with
 ``k.parse_html``; on the server that is a stand-in returning a
-``browser.DOMNode``, since the server itself never parses HTML.)
+``browser.Node``, since the server itself never parses HTML.)
 ``k.document`` on the server is therefore a stand-in of the
 brython ``browser.document`` object (a
-:class:`~kopis.server.browser.DOMNode` of the raw HTML string served at
+:class:`~kopis.server.browser.Node` of the raw HTML string served at
 ``/``): unified code works on it identically to the live DOM in the
 browser — ``document.append(...)``, ``document.createElement``,
 ``bind``, and friends all succeed — but nothing is rendered or fired:
@@ -44,7 +44,7 @@ don't announce one), and all exchanged data is JSON: the values of
 ``args``, ``kwargs``, and ``result`` are pickled Python objects
 (base64-encoded in the JSON). A value that cannot be pickled on the
 sender side does not travel — the send raises, and the developer wraps
-such a value in an ``RPCHandle`` (``k.get_handle``) instead; the handle
+such a value in an ``Handle`` (``k.get_handle``) instead; the handle
 is a magic type through which the other side operates on the live
 object (the owner side applies each operation, and decides whether it
 can be performed). A value that cannot be unpickled on the receiver
@@ -77,7 +77,7 @@ from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from ..common import (
     Client,
     KopisBase,
-    RPCHandle,
+    Handle,
     RpcError,
     SharedSignal,
     USES,
@@ -247,7 +247,7 @@ class Kopis(KopisBase):
     # -- document ------------------------------------------------------------
 
     @property
-    def document(self) -> browser.DOMNode:
+    def document(self) -> browser.Node:
         """The document served at ``/`` (a stand-in of the brython
         ``browser.document`` object; there is no live DOM on the server,
         so DOM operations on it succeed but do nothing)."""
@@ -390,15 +390,15 @@ class Kopis(KopisBase):
 
         self.app.router.add_get(path, _handler)
 
-    def parse_html(self, html_str: str) -> list[browser.DOMNode]:
+    def parse_html(self, html_str: str) -> list[browser.Node]:
         """Parse an HTML fragment into elements (a stand-in).
 
         The server has no live DOM, so the fragment is not parsed: a list
-        holding one stand-in ``browser.DOMNode`` is returned, and DOM
+        holding one stand-in ``browser.Node`` is returned, and DOM
         operations on it succeed but do nothing — the browser parses the
         same fragment under Brython.
         """
-        return [browser.DOMNode()]
+        return [browser.Node()]
 
     async def _capture_main_loop(self, app: web.Application) -> None:
         """Remember the web server's event loop (at startup)."""
@@ -835,7 +835,7 @@ class Kopis(KopisBase):
 
     def _route_op_locked(self, client_id: str, msg: dict[str, Any]) -> None:
         handle = msg.get("handle")
-        if not isinstance(handle, RPCHandle):
+        if not isinstance(handle, Handle):
             self._send_to(
                 client_id,
                 {
@@ -901,7 +901,7 @@ class Kopis(KopisBase):
         async def run() -> dict[str, Any]:
             handle = msg.get("handle")
             payload: dict[str, Any] = {"type": "result", "id": msg.get("id")}
-            if not isinstance(handle, RPCHandle):
+            if not isinstance(handle, Handle):
                 payload["error"] = {
                     "type": "TypeError",
                     "message": f"bad op message: no handle: {handle!r}",
@@ -929,7 +929,7 @@ class Kopis(KopisBase):
 
     def _handle_op(
         self,
-        handle: RPCHandle,
+        handle: Handle,
         op: str,
         name: str | None = None,
         args: tuple[object, ...] = (),

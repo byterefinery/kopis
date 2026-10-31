@@ -5,7 +5,7 @@ Every module in this subpackage runs unmodified on both the server
 live DOM, no implementation-specific machinery. The server-side and
 client-side halves of ``kopis`` import their shared code from here: the
 RPC wire format (:mod:`~kopis.common.wire`), the ``Kopis`` base class
-(:mod:`~kopis.common.base`), the ``RPCHandle`` type
+(:mod:`~kopis.common.base`), the ``Handle`` type
 (:mod:`~kopis.common.handle`), which stands in for a value that cannot
 be serialized — the live object stays on the side where it is, and the
 other side operates on it through the handle — the ``Signal`` class
@@ -28,7 +28,7 @@ has no live version of.
 
 from .base import Client, KopisBase
 from .effect import Effect
-from .handle import RPCHandle
+from .handle import Handle
 from .magic import Magic
 from .signal import SharedSignal, Signal
 from .tags import CONTAINER_TAGS, TAGS, VOID_TAGS
@@ -43,9 +43,9 @@ __all__ = [
     "WS_PATH",
     "Client",
     "Effect",
+    "Handle",
     "KopisBase",
     "Magic",
-    "RPCHandle",
     "RpcError",
     "SharedSignal",
     "Signal",

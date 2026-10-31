@@ -17,7 +17,7 @@ are set as plain DOM attributes.
 
 import html as _stdlib
 import re
-from browser import DOMNode, document, html
+from browser import DOMNode as Node, document, html
 
 __all__ = ["parse_html"]
 
@@ -68,7 +68,7 @@ _ATTR = re.compile(
 )
 
 
-def parse_html(html_str: str) -> list[DOMNode]:
+def parse_html(html_str: str) -> list[Node]:
     """Parse an HTML fragment into brython ``browser.html`` elements.
 
     Returns the top-level elements of the fragment, in order (a list,
@@ -77,10 +77,10 @@ def parse_html(html_str: str) -> list[DOMNode]:
     return _parse(html_str)
 
 
-def _parse(html_str: str) -> list[DOMNode]:
+def _parse(html_str: str) -> list[Node]:
     """The top-level elements of the fragment, in order."""
-    nodes: list[DOMNode] = []
-    stack: list[DOMNode] = []  # open elements, innermost last
+    nodes: list[Node] = []
+    stack: list[Node] = []  # open elements, innermost last
     pos = 0
     n = len(html_str)
     while pos < n:
@@ -126,7 +126,7 @@ def _parse(html_str: str) -> list[DOMNode]:
     return nodes
 
 
-def _element(name: str, attrs: str) -> DOMNode:
+def _element(name: str, attrs: str) -> Node:
     """A new element of the (uppercased) tag ``name`` with the
     attributes of ``attrs`` (the raw attribute string of its opening
     tag).
@@ -156,7 +156,7 @@ def _attr_pairs(attrs: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def _text(stack: list[DOMNode], text: str) -> None:
+def _text(stack: list[Node], text: str) -> None:
     """Append the (decoded) text to the innermost open element.
 
     Whitespace-only text, and text outside of any element, is
@@ -166,7 +166,7 @@ def _text(stack: list[DOMNode], text: str) -> None:
         stack[-1].append(_stdlib.unescape(text))
 
 
-def _close(stack: list[DOMNode], name: str) -> None:
+def _close(stack: list[Node], name: str) -> None:
     """Close the innermost open element of the (uppercased) tag
     ``name``.
 

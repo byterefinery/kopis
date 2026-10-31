@@ -1,21 +1,21 @@
-"""``RPCHandle`` — a stand-in for a live object on the other side.
+"""``Handle`` — a stand-in for a live object on the other side.
 
 A value that cannot be serialized does not travel, and sending it
-raises — the developer wraps the value in an :class:`RPCHandle`
+raises — the developer wraps the value in a :class:`Handle`
 instead: the wrap is ``Kopis.handle``, and ``Kopis.get_handle`` makes
 a handle to any object (picklable or not) for sending. The live object
 stays alive on the side where it is, and the handle travels freely
 between server and client, in either direction, as many times as
 needed.
 
-A handle prints as ``<RPCHandle local ...>`` or ``<RPCHandle remote ...>``
+A handle prints as ``<Handle local ...>`` or ``<Handle remote ...>``
 — ``local`` when this side owns the live object, ``remote`` when it
 came from the other side — followed by the true representation of the
 live object, which the owning side computes (a call of its ``__repr__``)
 when the handle is made. The string travels with the handle, so the
 receiving side prints it locally, with no round trip.
 
-An ``RPCHandle`` is a magic type: every operation on it is accepted,
+An ``Handle`` is a magic type: every operation on it is accepted,
 and sent over the wire to the side that owns the live object. It is
 the owner — the original place where the live object is — that applies
 the operation and decides whether it can be performed; a failure there
@@ -62,7 +62,7 @@ from __future__ import annotations
 import platform
 from typing import Any
 
-__all__ = ["RPCHandle"]
+__all__ = ["Handle"]
 
 _brython_wrap: Any = None  # the promise wrap function, cached
 
@@ -136,7 +136,7 @@ class _HandleAttr:
     (``await handle.attr``).
     """
 
-    def __init__(self, handle: RPCHandle, name: str) -> None:
+    def __init__(self, handle: Handle, name: str) -> None:
         self._handle = handle
         self._name = name
 
@@ -167,7 +167,7 @@ class _HandleAttr:
         return _value(result)
 
     def __repr__(self) -> str:
-        return f"<RPCHandle attribute {self._name!r}>"
+        return f"<Handle attribute {self._name!r}>"
 
 
 class _AsyncList:
@@ -189,7 +189,7 @@ class _AsyncList:
         return item
 
 
-class RPCHandle[T]:
+class Handle[T]:
     """A stand-in for a live object that does not travel.
 
     The live object stays on the side that owns it (``owner_side``, and
@@ -197,13 +197,13 @@ class RPCHandle[T]:
     this handle is what travels. ``true_repr`` is the true
     representation of the live object (a call of its ``__repr__``, made
     by the owning side when the handle is made), so this side prints
-    the handle as ``<RPCHandle local ...>`` or ``<RPCHandle remote ...>``
+    the handle as ``<Handle local ...>`` or ``<Handle remote ...>``
     — ``local`` when this side owns the live object, ``remote`` when it
     came from the other side — without a round trip.
 
     The type parameter is optional and documents only: it names the
-    type of the live object the handle points at (``RPCHandle[Point]``),
-    while the bare ``RPCHandle`` is a handle to any object. It is not
+    type of the live object the handle points at (``Handle[Point]``),
+    while the bare ``Handle`` is a handle to any object. It is not
     checked at runtime.
 
     The handle's own state is private (``_id``, ``_owner_side``,
@@ -246,7 +246,7 @@ class RPCHandle[T]:
         # arrives, and the receiving side re-binds it when it decodes
         # the message.
         return (
-            RPCHandle,
+            Handle,
             (self._id, self._owner_side, self._owner_id, self._true_repr),
         )
 
@@ -258,7 +258,7 @@ class RPCHandle[T]:
             side = "local"
         else:
             side = "remote"
-        return f"<RPCHandle {side} {self._true_repr}>"
+        return f"<Handle {side} {self._true_repr}>"
 
     __str__ = __repr__
 

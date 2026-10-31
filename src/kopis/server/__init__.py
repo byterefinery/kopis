@@ -11,8 +11,8 @@ browser code resolves to the client side there.
 
 The server has no live DOM and never parses the HTML it serves (the
 browser does, in the brython way): ``document`` is a stand-in of the
-brython ``browser.document`` object (a ``DOMNode`` of the served HTML
-string), ``DOMNode`` and ``DOMEvent`` are stand-ins of the brython
+brython ``browser.document`` object (a ``Node`` of the served HTML
+string), ``Node`` and ``Event`` are stand-ins of the brython
 classes, and ``bind``, ``html``, ``window``, ``ajax``, ``timer``, and
 ``javascript`` are stand-ins of the brython objects — the unified code
 works on them identically to the browser, with the brython semantics
@@ -23,14 +23,14 @@ rendered or fired.
 
 from . import aio, javascript
 from .app import Kopis
-from .browser import DOMEvent, DOMNode, ajax, bind, document, html, timer, window
+from .browser import Event, Node, ajax, bind, document, html, timer, window
 from .component import Component
 from .for_ import For
 from ..common import (
     Client,
     CONTAINER_TAGS,
     Effect,
-    RPCHandle,
+    Handle,
     RpcError,
     SharedSignal,
     Signal,
@@ -44,12 +44,12 @@ __all__ = [
     "VOID_TAGS",
     "Client",
     "Component",
-    "DOMEvent",
-    "DOMNode",
     "Effect",
+    "Event",
     "For",
+    "Handle",
     "Kopis",
-    "RPCHandle",
+    "Node",
     "RpcError",
     "SharedSignal",
     "Signal",

@@ -19,12 +19,12 @@ from inspect import iscoroutine
 from pathlib import Path
 from typing import Any
 
-from browser import DOMNode, aio, document, html, window, websocket
+from browser import DOMNode as Node, aio, document, html, window, websocket
 
 from ..common import (
     Client,
     KopisBase,
-    RPCHandle,
+    Handle,
     RpcError,
     SharedSignal,
     WS_PATH,
@@ -70,7 +70,7 @@ class Kopis(KopisBase):
     no-op). Values passed between the sides are pickled, so objects are
     restored on the other end as long as their type exists there. A value
     that cannot be pickled does not travel: sending it raises, and the
-    developer wraps it in an explicit :class:`~kopis.common.RPCHandle`
+    developer wraps it in an explicit :class:`~kopis.common.Handle`
     with ``k.get_handle`` instead — the live object stays alive on its
     side, and the other side operates on it through the handle::
 
@@ -114,7 +114,7 @@ class Kopis(KopisBase):
         self._connect()
 
     @property
-    def document(self) -> DOMNode:
+    def document(self) -> Node:
         """The browser document (the live DOM; the brython
         ``browser.document`` object)."""
         return document
@@ -176,7 +176,7 @@ class Kopis(KopisBase):
             return _on_decorator(window, name[2:])
         return super().__getattr__(name)
 
-    def _handle_getattr(self, handle: RPCHandle, name: str) -> Any:
+    def _handle_getattr(self, handle: Handle, name: str) -> Any:
         """The result of ``handle.<name>``.
 
         For a handle this tab owns, the attribute is read at once: a
@@ -192,7 +192,7 @@ class Kopis(KopisBase):
     def add_static_file(self, path: str, file_path: str | Path) -> None:
         """No-op on the client: files are served by the server."""
 
-    def parse_html(self, html_str: str) -> list[DOMNode]:
+    def parse_html(self, html_str: str) -> list[Node]:
         """Parse an HTML fragment into brython ``browser.html`` elements:
         the list of the fragment's top-level elements, in order (possibly
         empty).
@@ -364,7 +364,7 @@ class Kopis(KopisBase):
 
         Raises if a value in the message cannot be pickled: such a value
         does not travel — the developer wraps it in an explicit
-        ``RPCHandle`` (``k.get_handle``) if it should.
+        ``Handle`` (``k.get_handle``) if it should.
         """
         text = encode(message)
         if message.get("type") in ("call", "op"):
@@ -452,7 +452,7 @@ class Kopis(KopisBase):
         build the ``result`` or ``error`` part of its payload."""
         handle = msg.get("handle")
         if (
-            not isinstance(handle, RPCHandle)
+            not isinstance(handle, Handle)
             or handle._owner_side != self.side
             or handle._owner_id != self._client_id
         ):
@@ -479,7 +479,7 @@ class Kopis(KopisBase):
 
     def _handle_op(
         self,
-        handle: RPCHandle,
+        handle: Handle,
         op: str,
         name: str | None = None,
         args: tuple[object, ...] = (),

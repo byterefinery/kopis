@@ -70,7 +70,7 @@ This module extends both, once, by monkey-patching the brython
   ``k.window.onload = load`` (a coroutine ``load`` is wrapped as above,
   and — set after the ``load`` event has already been dispatched, which
   is always the case, since brython runs the application code on the
-  ``load`` event — is called at once, with a synthetic ``DOMEvent`` of
+  ``load`` event — is called at once, with a synthetic ``Event`` of
   the ``load`` type, as if the event fired at the binding), and the
   decorated handler is returned::
 
@@ -88,14 +88,14 @@ This module extends both, once, by monkey-patching the brython
   fires. And the window's ``onload`` handler set after the ``load``
   event has already been dispatched — which is always the case,
   since brython runs the application code on the ``load`` event — is
-  called at once, with a synthetic ``DOMEvent`` of the ``load`` type,
+  called at once, with a synthetic ``Event`` of the ``load`` type,
   as if the event fired at the binding::
 
       k.window.onload = window_load       # fires at once
       k.onload = window_load              # the same, on the app
 - a handler bound to the document's ``DOMContentLoaded`` event after
   it has already been dispatched is called at once, with a synthetic
-  ``DOMEvent`` of that type — with ``bind`` /
+  ``Event`` of that type — with ``bind`` /
   ``addEventListener`` on the document (as with
   ``k.addEventListener``, the short form for
   ``k.document.addEventListener``), using the event's exact name
@@ -152,7 +152,7 @@ appended to the document goes to its body.
 
 import builtins
 
-from browser import DOMEvent, DOMNode, aio, document, html, window
+from browser import DOMEvent as Event, DOMNode as Node, aio, document, html, window
 from collections.abc import Callable, Iterator
 from inspect import iscoroutinefunction
 from typing import Any
@@ -167,7 +167,7 @@ __all__ = ["install"]
 # active (a ``browser.html`` tag call, ``html.text``, or any
 # ``document.createElement`` / ``document.createTextNode``) are appended
 # to the block's element.
-_scope: list[DOMNode] = []
+_scope: list[Node] = []
 
 # The original (unpatched) ``document.createElement`` and
 # ``document.createTextNode`` — read before the extension patches them:
@@ -180,11 +180,11 @@ _scope: list[DOMNode] = []
 _native_create_element = document.createElement
 _native_create_text_node = document.createTextNode
 
-# The original (unpatched) ``DOMNode.__getitem__`` — read before the
+# The original (unpatched) ``Node.__getitem__`` — read before the
 # extension patches it: the window stand-in looks up the document's
 # elements by id through it (the patched subscript of the document no
 # longer does the id lookup).
-_native_getitem = DOMNode.__getitem__
+_native_getitem = Node.__getitem__
 
 
 class _StandIn:
@@ -313,10 +313,10 @@ def _window_load_passed() -> bool:
         return False
 
 
-def _synthetic_event(event: str) -> DOMEvent:
-    """A ``DOMEvent`` standing in for an event that has already
+def _synthetic_event(event: str) -> Event:
+    """An ``Event`` standing in for an event that has already
     fired."""
-    return DOMEvent(event)
+    return Event(event)
 
 
 def _wrap_async(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -336,10 +336,10 @@ def _wrap_async(func: Callable[..., Any]) -> Callable[..., Any]:
 
 def _is_script(node: object) -> bool:
     """Whether ``node`` is a ``<script>`` element."""
-    return isinstance(node, DOMNode) and getattr(node, "tagName", None) == "SCRIPT"
+    return isinstance(node, Node) and getattr(node, "tagName", None) == "SCRIPT"
 
 
-def _runnable_script(node: DOMNode) -> DOMNode:
+def _runnable_script(node: Node) -> Node:
     """A fresh script element with the attributes and text of ``node``.
 
     A ``<script>`` moved out of a parsed fragment (a ``<template>``) or
@@ -359,10 +359,10 @@ def _runnable_script(node: DOMNode) -> DOMNode:
 # nodes created outside the patched creation paths (a fragment's
 # elements, a clone) need it as an own property, and are made at
 # runtime, after the extension is installed.
-_patched_append: Callable[..., DOMNode] | None = None
+_patched_append: Callable[..., Node] | None = None
 
 
-def _own_append(element: DOMNode) -> None:
+def _own_append(element: Node) -> None:
     """Set ``append`` as an own property of ``element``, pointing to
     the patched ``append``.
 
@@ -378,13 +378,13 @@ def _own_append(element: DOMNode) -> None:
     element.append = lambda *args: patched(element, *args)
 
 
-def _fragment_nodes(html_str: str) -> list[DOMNode]:
+def _fragment_nodes(html_str: str) -> list[Node]:
     """The top-level nodes of the HTML fragment ``html_str`` (parsed by
     the browser), in order; a top-level ``<script>`` among them is
     recreated, so that it runs when it is inserted."""
     tpl = _native_create_element("template")
     tpl.innerHTML = html_str
-    nodes: list[DOMNode] = []
+    nodes: list[Node] = []
     for node in list(tpl.content):
         if _is_script(node):
             node = _runnable_script(node)
@@ -396,7 +396,7 @@ def _fragment_nodes(html_str: str) -> list[DOMNode]:
     return nodes
 
 
-def _append_fragment(self: DOMNode, html_str: str) -> DOMNode:
+def _append_fragment(self: Node, html_str: str) -> Node:
     """Append the top-level nodes of the HTML fragment ``html_str``
     (parsed by the browser), in order; a top-level ``<script>`` among
     them is recreated, so that it runs when it is inserted."""
@@ -410,26 +410,26 @@ def _append_fragment(self: DOMNode, html_str: str) -> DOMNode:
 
 def install() -> None:
     """Extend the DOM interface (a no-op if it is already extended)."""
-    if getattr(DOMNode, "_kopis_extended", False):
+    if getattr(Node, "_kopis_extended", False):
         return
 
-    # The original (unpatched) ``DOMNode.__le__`` — the native brython
+    # The original (unpatched) ``Node.__le__`` — the native brython
     # append of a single child (its ``attach``, which ``<=`` maps to):
     # read before the extension patches the operator.
-    _orig_le = DOMNode.__le__
-    _orig_bind = DOMNode.bind
-    _orig_events = DOMNode.events
-    _orig_setitem = DOMNode.__setitem__
-    _orig_setattr = DOMNode.__setattr__
-    _orig_unbind = DOMNode.unbind
-    _orig_clone = DOMNode.clone
+    _orig_le = Node.__le__
+    _orig_bind = Node.bind
+    _orig_events = Node.events
+    _orig_setitem = Node.__setitem__
+    _orig_setattr = Node.__setattr__
+    _orig_unbind = Node.unbind
+    _orig_clone = Node.clone
     # The class of the Javascript objects (e.g. the window): brython
     # dispatches their attribute sets through its ``__setattr__`, so
     # the same monkey-patch way works for them.
     _jsobj = type(window)
     _orig_jsobj_setattr = _jsobj.__setattr__
 
-    def append(self: DOMNode, *others: object) -> DOMNode:
+    def append(self: Node, *others: object) -> Node:
         """Append one or more children, in order (the brython
         ``append`` method, the way to add children to an element): a
         string is first parsed as an HTML fragment (see the module
@@ -448,20 +448,20 @@ def install() -> None:
     global _patched_append
     _patched_append = append
 
-    def le(self: DOMNode, other: object) -> DOMNode:
+    def le(self: Node, other: object) -> Node:
         raise TypeError(
             "unsupported operator on an element: use "
             "element.append(child) to append children"
         )
 
-    def clone(self: DOMNode) -> DOMNode:
+    def clone(self: Node) -> Node:
         """A copy of this element (the brython ``clone``), with the
         patched ``append`` of its own (a copy is a new element)."""
         copy = _orig_clone(self)
         _own_append(copy)
         return copy
 
-    def bind(self: DOMNode, event: str, func=None, options=None) -> object:
+    def bind(self: Node, event: str, func=None, options=None) -> object:
         if func is None:
             # The decorator form: the handler is bound when the
             # decorator is applied, through this function again.
@@ -486,7 +486,7 @@ def install() -> None:
             return self
         return _orig_bind(self, event, func, options)
 
-    def setitem(self: DOMNode, key: object, value: object) -> None:
+    def setitem(self: Node, key: object, value: object) -> None:
         """Set an attribute, or — with an ``on<event>`` key — an event
         handler: ``element["on<event>"] = func`` is the same as
         ``element.addEventListener("<event>", func)`` (a coroutine
@@ -504,7 +504,7 @@ def install() -> None:
                 return
         return _orig_setitem(self, key, value)
 
-    def getitem(self: DOMNode, key: object) -> object:
+    def getitem(self: Node, key: object) -> object:
         """Read an attribute, or — with an ``on<event>`` key — the
         handler bound with ``element["on<event>"] = func`` (the first
         one, if several are bound)."""
@@ -519,7 +519,7 @@ def install() -> None:
             raise KeyError(key)
         return _native_getitem(self, key)
 
-    def setattr(self: DOMNode, attr: str, value: object) -> None:
+    def setattr(self: Node, attr: str, value: object) -> None:
         """Set an attribute, as in brython — except that a coroutine
         function set with an ``on<event>`` attribute (e.g. a
         ``element.onclick = func`` where ``func`` is ``async def``)
@@ -564,7 +564,7 @@ def install() -> None:
         ):
             value(_synthetic_event("load"))
 
-    def enter(self: DOMNode) -> DOMNode:
+    def enter(self: Node) -> Node:
         """Enter a ``with element:`` block: append ``self`` to the
         innermost enclosing block element (if any), and make ``self``
         the innermost block element, so that the nodes created in the
@@ -574,7 +574,7 @@ def install() -> None:
         _scope.append(self)
         return self
 
-    def exit(self: DOMNode, *exc_info: object) -> bool:
+    def exit(self: Node, *exc_info: object) -> bool:
         """Leave a ``with element:`` block: ``self`` is no longer the
         innermost block element. Exceptions are not suppressed."""
         if _scope and _scope[-1] is self:
@@ -583,7 +583,7 @@ def install() -> None:
 
     _orig_create_element = _native_create_element
 
-    def create_element(tag: str, *args: object) -> DOMNode:
+    def create_element(tag: str, *args: object) -> Node:
         """Create an element (the brython
         ``document.createElement``), appended to the innermost
         ``with element:`` block element if a block is active."""
@@ -593,7 +593,7 @@ def install() -> None:
             _scope[-1].append(element)
         return element
 
-    def create_text_node(text: str) -> DOMNode:
+    def create_text_node(text: str) -> Node:
         """Create a text node (the brython
         ``document.createTextNode``), appended to the innermost
         ``with element:`` block element if a block is active."""
@@ -663,17 +663,17 @@ def install() -> None:
         html.tags[_name] = _wrapped
         builtins.setattr(html, _name, _wrapped)
 
-    DOMNode.append = append
-    DOMNode.attach = append
-    DOMNode.__le__ = le
-    DOMNode.bind = bind
-    DOMNode.addEventListener = bind
-    DOMNode.__setitem__ = setitem
-    DOMNode.__getitem__ = getitem
-    DOMNode.__setattr__ = setattr
-    DOMNode.__enter__ = enter
-    DOMNode.__exit__ = exit
-    DOMNode.clone = clone
+    Node.append = append
+    Node.attach = append
+    Node.__le__ = le
+    Node.bind = bind
+    Node.addEventListener = bind
+    Node.__setitem__ = setitem
+    Node.__getitem__ = getitem
+    Node.__setattr__ = setattr
+    Node.__enter__ = enter
+    Node.__exit__ = exit
+    Node.clone = clone
     document.createElement = create_element
     document.createTextNode = create_text_node
     html.attribute_mapper = attribute_mapper
@@ -686,11 +686,11 @@ def install() -> None:
     # and every element of the document element's subtree).
     _own_append(document)
 
-    def patch_existing(node: DOMNode) -> None:
+    def patch_existing(node: Node) -> None:
         _own_append(node)
         for child in node.child_nodes():
             if child.nodeType == 1:
                 patch_existing(child)
 
     patch_existing(document.documentElement)
-    DOMNode._kopis_extended = True
+    Node._kopis_extended = True
