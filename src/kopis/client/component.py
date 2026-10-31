@@ -5,9 +5,9 @@ The :class:`~kopis.Component` of the client side, built by
 ``browser.DOMNode`` class: the instance is created with
 ``document.createElement`` and reclassified into the component class,
 so it **is its own root element** — the brython element interface works
-on it directly (``<=``, ``+``, ``*``, attribute subscripts, event
+on it directly (``append``, ``+``, ``*``, attribute subscripts, event
 handlers, iteration, and the ``with component:`` block form), and it is
-usable everywhere an element is (``document.body <= button``,
+usable everywhere an element is (``document.body.append(button)``,
 ``k.window.btn0`` by id, a child of another component).
 
 The ``with component:`` block form appends the component to the
@@ -47,8 +47,14 @@ from typing import Any
 from ..common.component import make_component
 from ..common.signal import _effect_scope
 from .dom import _fragment_nodes, _native_create_text_node, _scope
+from .dom import install as _install_dom
 
 __all__ = ["Component"]
+
+# The DOM extension, before the Component class is built over the
+# extended ``DOMNode`` (a no-op if the package's ``__init__`` already
+# installed it).
+_install_dom()
 
 
 def _enter(self: DOMNode) -> DOMNode:
@@ -66,7 +72,7 @@ def _resolve_async(self: DOMNode, coro) -> None:
     """Resolve a child function that returned a coroutine: the value
     arrives when it resolves (see the module docstring)."""
     placeholder = _native_create_text_node("")
-    self.appendChild(placeholder)
+    self.append(placeholder)
 
     async def fill() -> None:
         try:
@@ -104,7 +110,7 @@ def _reactive(self: DOMNode, child: object) -> None:
     # The nodes of the child's current value, in order (a single empty
     # text node at the start, the placeholder of the value to come).
     nodes: list[DOMNode] = [_native_create_text_node("")]
-    self.appendChild(nodes[0])
+    self.append(nodes[0])
     # The generation of the read (a read is superseded by the next one):
     # a pending resolution of a superseded read is dropped, so a slow
     # value of an older read cannot overwrite the value of a newer one

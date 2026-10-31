@@ -7,7 +7,7 @@ browser-only objects runs without complaint on the server and
 type-checks: any attribute access, call, iteration, subscript, and
 await on a ``Magic`` succeeds and yields another ``Magic``.
 
-The brython DOM operators work the same way: ``<=`` (append), ``+``
+The brython DOM interface works the same way: ``append``, ``+``
 (group), ``*`` (clone), and the ``with`` statement all succeed, but do
 nothing — there is no live DOM on the server.
 """
@@ -48,7 +48,7 @@ class Magic:
 
     Stateless: attribute access, calls, iteration, subscripts, and
     awaits all succeed (returning another ``Magic``); truth testing and
-    length are falsy/zero. The brython DOM operators work the same way
+    length are falsy/zero. The brython DOM interface works the same way
     (see below): there is no live DOM on the server. An ``on<event>``
     name (e.g. ``window.onload``) reads as the decorator of the
     decorator form: it binds nothing (no live DOM) and returns the
@@ -107,22 +107,12 @@ class Magic:
     #
     # They succeed, but do nothing on the server: there is no live DOM.
 
-    def __le__(self, other: object) -> Magic:
-        """Append ``other`` (the brython ``<=``, an alias of ``attach``).
-
-        A string argument is first parsed as an HTML fragment on the
-        client (the server is a no-op either way). Returns ``self`` as
-        in brython, so calls can be chained."""
-        return self
-
-    def attach(self, other: object) -> Magic:
-        """Append ``other`` as a child (the brython ``attach``, the method
-        behind ``<=``). Returns ``self`` so calls can be chained."""
-        return self
-
     def append(self, *items: object) -> Magic:
-        """Append children — works the same way as ``<=`` (the brython
-        ``append``). Returns ``self`` so calls can be chained."""
+        """Append one or more children, in order (the brython
+        ``append`` method, the way to add children to an element). A
+        string argument is first parsed as an HTML fragment on the
+        client (the server is a no-op either way). Returns ``self`` so
+        calls can be chained."""
         return self
 
     def __add__(self, other: object) -> Magic:

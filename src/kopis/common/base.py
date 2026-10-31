@@ -399,7 +399,7 @@ class KopisBase(ABC):
                     if (other.src if tag == "SCRIPT" else other.href) == url:
                         break  # already in the head (a shared dependency)
                 else:
-                    head.attach(element)
+                    head.append(element)
         return self
 
     def signal(

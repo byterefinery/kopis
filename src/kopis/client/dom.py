@@ -1,6 +1,6 @@
 """Extensions of the brython DOM interface (client side).
 
-In plain brython, a string appended with ``<=`` is added as a single
+In plain brython, a string appended with ``append`` is added as a single
 text node (its markup escaped as visible text), and an event handler
 that is a coroutine function is called, returns a coroutine that is
 never awaited, and never runs.
@@ -9,18 +9,16 @@ This module extends both, once, by monkey-patching the brython
 ``DOMNode`` class (installed by :func:`install`, called when
 :mod:`kopis.client` is imported; pure Python, no Javascript):
 
-- a string appended with ``<=`` or with ``attach`` is first parsed by
-  the browser as an HTML fragment, and the fragment's top-level nodes
-  — elements, text, and comments — are appended, in order. A string
-  without markup still appends a text node, so plain text keeps working
-  as before. A ``<script>`` among them (or a script element appended
-  directly with ``<=`` or ``attach``) is recreated as a fresh script
-  element with the same attributes and text, so that it runs when it
-  is inserted: a script moved out of a parsed fragment keeps the
-  browser's "already started" mark and would never execute, while a
-  freshly created script runs. The native ``append`` method is left
-  untouched (a string appended with it is a text node, as in plain
-  brython);
+- a string appended with ``append`` is first parsed by the browser as
+  an HTML fragment, and the fragment's top-level nodes — elements,
+  text, and comments — are appended, in order. A string without markup
+  still appends a text node, so plain text keeps working as before. A
+  ``<script>`` among them (or a script element appended directly) is
+  recreated as a fresh script element with the same attributes and
+  text, so that it runs when it is inserted: a script moved out of a
+  parsed fragment keeps the browser's "already started" mark and would
+  never execute, while a freshly created script runs. ``append`` takes
+  any number of children, in order;
 - a coroutine function passed to ``bind``, to ``addEventListener`` (or
   to the ``browser.bind`` decorator, which goes through them) is
   started with ``aio.run`` when the event fires, so ``await`` works
@@ -28,7 +26,7 @@ This module extends both, once, by monkey-patching the brython
 
       async def click(event):
           value = await k.some_server_call(...)
-          k.document <= value
+          k.document.append(value)
 
       k.window.btn.addEventListener("click", click)
 - an event handler can also be bound with the attribute syntax
@@ -132,7 +130,7 @@ This module extends both, once, by monkey-patching the brython
 
       # is the same as
 
-      document.body.attach(
+      document.body.append(
           '<button id="btn0" class="btn btn-primary">Demo 1</button>')
 
   (On the server the block and the tag calls are stand-in no-ops, as
@@ -151,6 +149,8 @@ grouped with ``+`` is still a text node), ``del`` still removes, and
 non-coroutine handlers are bound unchanged. As in brython, content
 appended to the document goes to its body.
 """
+
+import builtins
 
 from browser import DOMEvent, DOMNode, aio, document, html, window
 from collections.abc import Callable, Iterator
@@ -225,9 +225,6 @@ class _StandIn:
 
     # The brython DOM operators and protocols, delegated to the wrapped
     # object.
-
-    def __le__(self, other: object) -> Any:
-        return self._target <= other
 
     def __add__(self, other: object) -> Any:
         return self._target + other
@@ -358,6 +355,29 @@ def _runnable_script(node: DOMNode) -> DOMNode:
     return fresh
 
 
+# The patched ``append`` of :func:`install` (``None`` before it runs):
+# nodes created outside the patched creation paths (a fragment's
+# elements, a clone) need it as an own property, and are made at
+# runtime, after the extension is installed.
+_patched_append: Callable[..., DOMNode] | None = None
+
+
+def _own_append(element: DOMNode) -> None:
+    """Set ``append`` as an own property of ``element``, pointing to
+    the patched ``append``.
+
+    For an attribute the element's Javascript object already has
+    (like ``append``), brython resolves it to the Javascript one,
+    whatever class the element has — an own property set on the
+    element itself always wins, and brython gives back the original
+    Python object when a Python function is read from a Javascript
+    object. A no-op before :func:`install` runs."""
+    patched = _patched_append
+    if patched is None:
+        return
+    element.append = lambda *args: patched(element, *args)
+
+
 def _fragment_nodes(html_str: str) -> list[DOMNode]:
     """The top-level nodes of the HTML fragment ``html_str`` (parsed by
     the browser), in order; a top-level ``<script>`` among them is
@@ -369,6 +389,10 @@ def _fragment_nodes(html_str: str) -> list[DOMNode]:
         if _is_script(node):
             node = _runnable_script(node)
         nodes.append(node)
+    for node in nodes:
+        # The nodes are created by the browser (not through the patched
+        # creation paths): give them the patched append.
+        _own_append(node)
     return nodes
 
 
@@ -376,11 +400,11 @@ def _append_fragment(self: DOMNode, html_str: str) -> DOMNode:
     """Append the top-level nodes of the HTML fragment ``html_str``
     (parsed by the browser), in order; a top-level ``<script>`` among
     them is recreated, so that it runs when it is inserted."""
-    # A document node cannot take element children directly; brython's
-    # own attach puts them in the body.
+    # A document node cannot take element children directly; they go
+    # to the body.
     target = self.body if self is document else self
     for node in _fragment_nodes(html_str):
-        target.appendChild(node)
+        target.append(node)
     return self
 
 
@@ -389,33 +413,53 @@ def install() -> None:
     if getattr(DOMNode, "_kopis_extended", False):
         return
 
+    # The original (unpatched) ``DOMNode.__le__`` — the native brython
+    # append of a single child (its ``attach``, which ``<=`` maps to):
+    # read before the extension patches the operator.
     _orig_le = DOMNode.__le__
     _orig_bind = DOMNode.bind
     _orig_events = DOMNode.events
     _orig_setitem = DOMNode.__setitem__
     _orig_setattr = DOMNode.__setattr__
     _orig_unbind = DOMNode.unbind
+    _orig_clone = DOMNode.clone
     # The class of the Javascript objects (e.g. the window): brython
     # dispatches their attribute sets through its ``__setattr__`, so
     # the same monkey-patch way works for them.
     _jsobj = type(window)
     _orig_jsobj_setattr = _jsobj.__setattr__
 
-    def attach(self: DOMNode, other: object) -> DOMNode:
-        if isinstance(other, str):
-            return _append_fragment(self, other)
-        target = self.body if self is document else self
-        if _is_script(other):
-            other = _runnable_script(other)
-        target.appendChild(other)
+    def append(self: DOMNode, *others: object) -> DOMNode:
+        """Append one or more children, in order (the brython
+        ``append`` method, the way to add children to an element): a
+        string is first parsed as an HTML fragment (see the module
+        docstring), and a ``<script>`` among the children is
+        recreated, so that it runs when it is inserted. Returns
+        ``self`` so calls can be chained."""
+        for other in others:
+            if isinstance(other, str):
+                _append_fragment(self, other)
+            elif _is_script(other):
+                _orig_le(self, _runnable_script(other))
+            else:
+                _orig_le(self, other)
         return self
 
+    global _patched_append
+    _patched_append = append
+
     def le(self: DOMNode, other: object) -> DOMNode:
-        if isinstance(other, str):
-            return _append_fragment(self, other)
-        if _is_script(other):
-            other = _runnable_script(other)
-        return _orig_le(self, other)
+        raise TypeError(
+            "unsupported operator on an element: use "
+            "element.append(child) to append children"
+        )
+
+    def clone(self: DOMNode) -> DOMNode:
+        """A copy of this element (the brython ``clone``), with the
+        patched ``append`` of its own (a copy is a new element)."""
+        copy = _orig_clone(self)
+        _own_append(copy)
+        return copy
 
     def bind(self: DOMNode, event: str, func=None, options=None) -> object:
         if func is None:
@@ -526,7 +570,7 @@ def install() -> None:
         the innermost block element, so that the nodes created in the
         block's body are appended to it (see the module docstring)."""
         if _scope:
-            _scope[-1] <= self
+            _scope[-1].append(self)
         _scope.append(self)
         return self
 
@@ -544,8 +588,9 @@ def install() -> None:
         ``document.createElement``), appended to the innermost
         ``with element:`` block element if a block is active."""
         element = _orig_create_element(tag, *args)
+        _own_append(element)
         if _scope:
-            _scope[-1] <= element
+            _scope[-1].append(element)
         return element
 
     def create_text_node(text: str) -> DOMNode:
@@ -554,7 +599,7 @@ def install() -> None:
         ``with element:`` block element if a block is active."""
         node = _native_create_text_node(str(text))
         if _scope:
-            _scope[-1] <= node
+            _scope[-1].append(node)
         return node
 
     _orig_attribute_mapper = html.attribute_mapper
@@ -580,7 +625,46 @@ def install() -> None:
             return tag
         raise AttributeError(name)
 
-    DOMNode.attach = attach
+    # The tag classes of the html builder: each is replaced by a
+    # subclass that gives the instances it creates the patched
+    # ``append`` as an own property. The subclass pretends to live in
+    # the ``browser.html`` module, so that the attribute resolution of
+    # its instances (including the ones brython itself wraps, which
+    # take their class from the live ``html.tags`` mapping) is exactly
+    # the one of the original class. The ``__init__`` is a no-op: the
+    # tag class's own init already ran inside ``__new__``.
+    def wrap_tag_class(cls: Any) -> Any:
+        original = cls
+
+        def __new__(cls_: type, *args: object, **kwargs: object) -> Any:
+            element = original(*args, **kwargs)
+            _own_append(element)
+            return element
+
+        def __init__(self: Any, *args: object, **kwargs: object) -> None:
+            # ``original``'s init already ran in ``__new__``.
+            return
+
+        wrapped: Any = type(
+            cls.__name__,
+            (cls,),
+            {
+                "__new__": __new__,
+                "__init__": __init__,
+            },
+        )
+        wrapped.__module__ = "browser.html"
+        return wrapped
+
+    for _name, _cls in list(html.tags.items()):
+        if _name == "IFRAME":
+            continue  # the html factory returns a proxy, not an element
+        _wrapped = wrap_tag_class(_cls)
+        html.tags[_name] = _wrapped
+        builtins.setattr(html, _name, _wrapped)
+
+    DOMNode.append = append
+    DOMNode.attach = append
     DOMNode.__le__ = le
     DOMNode.bind = bind
     DOMNode.addEventListener = bind
@@ -589,10 +673,24 @@ def install() -> None:
     DOMNode.__setattr__ = setattr
     DOMNode.__enter__ = enter
     DOMNode.__exit__ = exit
+    DOMNode.clone = clone
     document.createElement = create_element
     document.createTextNode = create_text_node
     html.attribute_mapper = attribute_mapper
     html.text = create_text_node
     html.__getattr__ = html_getattr
     _jsobj.__setattr__ = jsobj_setattr
+
+    # The elements of the initial document predate the extension: give
+    # them the patched ``append`` as well (the document node itself,
+    # and every element of the document element's subtree).
+    _own_append(document)
+
+    def patch_existing(node: DOMNode) -> None:
+        _own_append(node)
+        for child in node.child_nodes():
+            if child.nodeType == 1:
+                patch_existing(child)
+
+    patch_existing(document.documentElement)
     DOMNode._kopis_extended = True

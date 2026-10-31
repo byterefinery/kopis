@@ -30,12 +30,10 @@ dev = [
 extend-exclude = [".agents"]
 
 [tool.ruff.lint]
-# B015 (pointless comparison) cannot see through the overloaded `<=`
-# operator, which in this codebase is the brython-style DOM append.
 # SIM117 (combine nested with statements) cannot see that a nested
 # `with element:` block of DOM elements is a nesting level (the inner
 # element is the parent of the outer's body), not a group.
-ignore = ["B015", "I001", "SIM117"]
+ignore = ["I001", "SIM117"]
 
 [tool.ty.analysis]
 allowed-unresolved-imports = ["browser", "javascript"]

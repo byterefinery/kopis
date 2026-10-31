@@ -15,7 +15,7 @@ parses the HTML it loads. (The client can parse fragments on demand with
 brython ``browser.document`` object (a
 :class:`~kopis.server.browser.DOMNode` of the raw HTML string served at
 ``/``): unified code works on it identically to the live DOM in the
-browser — ``document <= ...``, ``document.createElement``,
+browser — ``document.append(...)``, ``document.createElement``,
 ``bind``, and friends all succeed — but nothing is rendered or fired:
 the browser does all that by running the same code under Brython.
 

@@ -198,10 +198,9 @@ class Kopis(KopisBase):
         empty).
 
         Standard HTML markup only — see ``kopis.client.parser`` for the
-        parser. (Appending a string with ``<=`` or ``attach`` —
-        ``element <= html_str`` or ``element.attach(html_str)`` — parses
-        the fragment first and appends its top-level nodes; see
-        ``kopis.client.dom``.)
+        parser. (Appending a string with ``append``
+        (``element.append(html_str)``) parses the fragment first and
+        appends its top-level nodes; see ``kopis.client.dom``.)
         """
         return parse_html(html_str)
 

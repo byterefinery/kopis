@@ -10,8 +10,8 @@ unmodified, with the brython semantics where they matter:
 - :class:`DOMNode` is the stand-in of the brython ``DOMNode`` class
   (the class of every element, and of the document itself): the brython
   element interface works on it — ``append``, ``bind``, ``clone``,
-  attribute subscripts, ``<=`` / ``+`` / ``*``, ``with`` — but
-  everything is a no-op;
+  attribute subscripts, ``+`` / ``*``, ``with`` — but everything is a
+  no-op;
 - :class:`DOMEvent` is the stand-in of the brython ``DOMEvent`` class
   (events never fire on the server);
 - :func:`bind` is the stand-in of the brython ``browser.bind``
@@ -49,9 +49,9 @@ __all__ = [
 class DOMNode(Magic):
     """A stand-in for a brython ``DOMNode`` (a browser DOM element).
 
-    The brython element interface works on it — ``append`` / ``attach`` /
-    ``<=`` (all the same operation), ``bind``, ``clone``, attribute
-    subscripts, ``+`` / ``*``, ``with`` — but everything is a no-op:
+    The brython element interface works on it — ``append`` (the way to
+    add children), ``bind``, ``clone``, attribute subscripts, ``+`` /
+    ``*``, ``with`` — but everything is a no-op:
     there is no live DOM on the server, so handlers are never fired and
     nothing is rendered. An ``on<event>`` read (``element.onclick``) is
     the no-op decorator of the decorator form: it binds nothing and
@@ -202,10 +202,6 @@ class _Document(DOMNode):
 
     def __delitem__(self, key: object) -> None:
         del self._resolve()[key]
-
-    def __le__(self, other: object) -> _Document:
-        self._resolve() <= other
-        return self
 
     def __iter__(self) -> Iterator[Any]:
         return iter(self._resolve())

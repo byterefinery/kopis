@@ -6,13 +6,13 @@ component instance is **its own root element**: each side builds its
 ``DOMNode`` class, and the instance is created with
 ``document.createElement(tag)`` and reclassified into the component
 class — so the brython element interface works on a component directly:
-``<=`` (append), ``+`` (group), ``*`` (clone), attribute subscripts
+``append``, ``+`` (group), ``*`` (clone), attribute subscripts
 (``component["id"]``), event handlers (``component.onclick`` or
 ``component["onclick"]``), iteration over the children, and the ``with
 component:`` block form (children created in the block go into the
 component). A component is therefore usable everywhere an element is:
-``document.body <= button``, ``k.window.btn0`` (by id), or as a child of
-another component.
+``document.body.append(button)``, ``k.window.btn0`` (by id), or as a
+child of another component.
 
 The constructor takes the children and the attributes of the root
 element, in the standard (W3C/MDN) names of the DOM — ``id``, ``onclick``
@@ -181,9 +181,9 @@ def make_component(
                         else:
                             value.close()
                     else:
-                        self <= _child_value(value)
+                        self.append(_child_value(value))
             else:
-                self <= _child_value(child)
+                self.append(_child_value(child))
 
     def el(self: Any) -> Any:
         """The component's root element: the component itself (a

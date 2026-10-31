@@ -11,7 +11,7 @@ elif IS_CLIENT:
 
 k = Kopis()
 
-# k.document.head.attach("""
+# k.document.head.append("""
 #     <script src="//unpkg.com/alpinejs" defer></script>
 #
 #     <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
@@ -86,10 +86,10 @@ async def btn0_click(e: DOMEvent):
     v: int = await k.server_button_click("btn0_click", e_h, point_h)
     print("btn0_click result:", v)
 
-    k.document.body.attach(f"\n{v!s}")
+    k.document.body.append(f"\n{v!s}")
 
 
-k.document.body.attach("""
+k.document.body.append("""
     Hello 4 !
 
     <button id="btn0" class="btn btn-primary">Demo</button>

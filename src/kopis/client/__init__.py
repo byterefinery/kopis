@@ -73,7 +73,9 @@ __all__ = [
     "window",
 ]
 
-# Extend the DOM (client side): a string appended with <= or attach is
-# parsed as an HTML fragment first, and a coroutine function bound to an
-# event is started with aio.run when the event fires.
+# Extend the DOM (client side): a string passed to append is parsed as
+# an HTML fragment first, and a coroutine function bound to an event is
+# started with aio.run when the event fires. (The component module
+# installs it as well, so that the Component class is built over the
+# extended DOMNode; the call here is a no-op then.)
 _install_dom()

@@ -111,7 +111,7 @@ def _parse(html_str: str) -> list[DOMNode]:
             continue
         el = _element(name, attrs)
         if stack:
-            stack[-1] <= el
+            stack[-1].append(el)
         else:
             nodes.append(el)
         if self_closing or name in _VOID_TAGS:
@@ -119,7 +119,7 @@ def _parse(html_str: str) -> list[DOMNode]:
         if name in _RAW_TEXT_TAGS:
             end = _raw_end(name, html_str, pos)
             if end > pos:
-                el <= html_str[pos:end]
+                el.append(html_str[pos:end])
             pos = end
             continue
         stack.append(el)
@@ -163,7 +163,7 @@ def _text(stack: list[DOMNode], text: str) -> None:
     ignored.
     """
     if stack and text.strip():
-        stack[-1] <= _stdlib.unescape(text)
+        stack[-1].append(_stdlib.unescape(text))
 
 
 def _close(stack: list[DOMNode], name: str) -> None:

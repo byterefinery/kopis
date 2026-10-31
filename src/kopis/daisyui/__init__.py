@@ -49,8 +49,8 @@ the block's element as it is created (a node given to a deeper
 element as a child moves there). A ``k.html.<tag>(...)`` call, in
 contrast, appends at most one child — several positional arguments
 are not appended (the brython ``html`` factory takes at most one),
-so a native element with several children is built in a block. The
-DOM operators (``<=`` and friends) still work, but the constructor
+so a native element with several children is built in a block.
+``append`` works on any element of a component, but the constructor
 and the block are the readable ways.
 
 The components all inherit from :class:`DaisyUIComponent`

@@ -16,7 +16,7 @@ string), ``DOMNode`` and ``DOMEvent`` are stand-ins of the brython
 classes, and ``bind``, ``html``, ``window``, ``ajax``, ``timer``, and
 ``javascript`` are stand-ins of the brython objects — the unified code
 works on them identically to the browser, with the brython semantics
-where they matter (``<=`` appends, ``+`` and ``*`` group and clone,
+where they matter (``append`` appends, ``+`` and ``*`` group and clone,
 ``bind`` binds, ``html.TAG(...)`` creates elements), but nothing is
 rendered or fired.
 """
